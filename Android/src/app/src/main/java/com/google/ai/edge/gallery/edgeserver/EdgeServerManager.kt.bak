@@ -1,3 +1,19 @@
+/*
+ * Copyright 2025 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.google.ai.edge.gallery.edgeserver
 
 import android.content.ComponentName
@@ -18,9 +34,9 @@ private const val TAG = "EdgeServerManager"
  * Singleton that manages the Edge Server lifecycle and exposes observable
  * state for the Compose UI.
  *
- * 修正版ポイント:
- * - bindModel() されたモデルを remembered* に保持する
- * - 後から server / service が起動しても remembered* を再適用する
+ * The manager holds a direct reference to the [EdgeServer] instance so that
+ * model binding works immediately, even before the Android Service connection
+ * completes (which is asynchronous).
  */
 object EdgeServerManager {
 
@@ -35,29 +51,19 @@ object EdgeServerManager {
   val state: StateFlow<ServerState> = _state.asStateFlow()
 
   /** Direct server reference for immediate model binding. */
-  @Volatile
-  var server: EdgeServer? = null
+  @Volatile var server: EdgeServer? = null
     private set
 
   /** Callback invoked by the server when it needs a model. Set by NavGraph. */
-  @Volatile
-  var modelFinderCallback: (() -> Unit)? = null
+  @Volatile var modelFinderCallback: (() -> Unit)? = null
 
   private var service: EdgeServerService? = null
   private var bound = false
-
-  // ───────────────────────────────────────────────────────────────────────
-  // 覚えておくモデル
-  // ───────────────────────────────────────────────────────────────────────
-  @Volatile private var rememberedModel: Model? = null
-  @Volatile private var rememberedHelper: LlmModelHelper? = null
-  @Volatile private var rememberedDisplayName: String = ""
 
   private val connection = object : ServiceConnection {
     override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
       service = (binder as EdgeServerService.LocalBinder).getService()
       bound = true
-      applyRememberedModelToService()
       refreshState()
       Log.i(TAG, "Service connected")
     }
@@ -71,19 +77,9 @@ object EdgeServerManager {
   }
 
   /** Start the Edge Server on [host]:[port] with a foreground service. */
-  fun startServer(
-    context: Context,
-    host: String = EdgeServer.DEFAULT_HOST,
-    port: Int = EdgeServer.DEFAULT_PORT,
-  ) {
+  fun startServer(context: Context, host: String = EdgeServer.DEFAULT_HOST, port: Int = EdgeServer.DEFAULT_PORT) {
     if (server == null || !server!!.isAlive) {
-      server = EdgeServer(hostname = host, port = port).also {
-        it.modelFinder = modelFinderCallback
-      }
-
-      // ここで remembered モデルを先に再適用
-      applyRememberedModelToServer()
-
+      server = EdgeServer(hostname = host, port = port).also { it.modelFinder = modelFinderCallback }
       try {
         server?.start()
         Log.i(TAG, "Server started on $host:$port")
@@ -96,16 +92,9 @@ object EdgeServerManager {
       putExtra("host", host)
       putExtra("port", port)
     }
-
     context.startForegroundService(intent)
     context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
-
-    _state.value = _state.value.copy(
-      isRunning = true,
-      host = host,
-      port = port,
-      modelName = rememberedDisplayName,
-    )
+    _state.value = _state.value.copy(isRunning = true, host = host, port = port)
   }
 
   /** Stop the server and foreground service. */
@@ -114,9 +103,7 @@ object EdgeServerManager {
     server = null
 
     if (bound) {
-      try {
-        context.unbindService(connection)
-      } catch (e: Exception) {
+      try { context.unbindService(connection) } catch (e: Exception) {
         Log.w(TAG, "Unbind error: ${e.message}")
       }
       bound = false
@@ -124,75 +111,32 @@ object EdgeServerManager {
 
     context.stopService(Intent(context, EdgeServerService::class.java))
     service = null
-
-    // rememberedModel は消さない
-    _state.value = _state.value.copy(
-      isRunning = false,
-      modelName = rememberedDisplayName,
-    )
-
+    _state.value = ServerState()
     Log.i(TAG, "Server stopped")
   }
 
   /** Bind a loaded model so the server can serve inference requests. */
   fun bindModel(model: Model, helper: LlmModelHelper, displayName: String) {
-    // 覚えておく
-    rememberedModel = model
-    rememberedHelper = helper
-    rememberedDisplayName = displayName
-
-    // 今いる server / service に適用
-    applyRememberedModelToServer()
-    applyRememberedModelToService()
-
+    server?.activeModel = model
+    server?.activeModelHelper = helper
+    server?.activeModelDisplayName = displayName
+    service?.setActiveModel(model, helper, displayName)
     _state.value = _state.value.copy(modelName = displayName)
     Log.i(TAG, "Model bound: $displayName")
   }
 
   /** Unbind the current model. */
   fun unbindModel() {
-    rememberedModel = null
-    rememberedHelper = null
-    rememberedDisplayName = ""
-
     server?.activeModel = null
     server?.activeModelHelper = null
     server?.activeModelDisplayName = ""
-
     service?.clearActiveModel()
-
     _state.value = _state.value.copy(modelName = "")
-  }
-
-  private fun applyRememberedModelToServer() {
-    val model = rememberedModel
-    val helper = rememberedHelper
-    val s = server
-    if (model != null && helper != null && s != null) {
-      s.activeModel = model
-      s.activeModelHelper = helper
-      s.activeModelDisplayName = rememberedDisplayName
-      Log.i(TAG, "Rebound model to in-process server: $rememberedDisplayName")
-    }
-  }
-
-  private fun applyRememberedModelToService() {
-    val model = rememberedModel
-    val helper = rememberedHelper
-    val svc = service
-    if (model != null && helper != null && svc != null) {
-      svc.setActiveModel(model, helper, rememberedDisplayName)
-      Log.i(TAG, "Rebound model to service: $rememberedDisplayName")
-    }
   }
 
   private fun refreshState() {
     val running = server?.isAlive == true || service?.isServerRunning() == true
     val port = server?.listeningPort ?: service?.getPort() ?: _state.value.port
-    _state.value = _state.value.copy(
-      isRunning = running,
-      port = port,
-      modelName = rememberedDisplayName,
-    )
+    _state.value = _state.value.copy(isRunning = running, port = port)
   }
 }
