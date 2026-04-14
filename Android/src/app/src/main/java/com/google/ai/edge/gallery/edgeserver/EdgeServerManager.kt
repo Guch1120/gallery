@@ -29,6 +29,11 @@ object EdgeServerManager {
     val host: String = EdgeServer.DEFAULT_HOST,
     val port: Int = EdgeServer.DEFAULT_PORT,
     val modelName: String = "",
+    val latestRequest: String = "",
+    val latestResponse: String = "",
+    val latestImageCount: Int = 0,
+    val requestInProgress: Boolean = false,
+    val latestError: String = "",
   )
 
   private val _state = MutableStateFlow(ServerState())
@@ -52,6 +57,8 @@ object EdgeServerManager {
   @Volatile private var rememberedModel: Model? = null
   @Volatile private var rememberedHelper: LlmModelHelper? = null
   @Volatile private var rememberedDisplayName: String = ""
+  @Volatile private var rememberedSupportImage: Boolean = false
+  @Volatile private var rememberedSupportAudio: Boolean = false
 
   private val connection = object : ServiceConnection {
     override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -135,11 +142,29 @@ object EdgeServerManager {
   }
 
   /** Bind a loaded model so the server can serve inference requests. */
-  fun bindModel(model: Model, helper: LlmModelHelper, displayName: String) {
-    // 覚えておく
+  fun bindModel(
+    model: Model,
+    helper: LlmModelHelper,
+    displayName: String,
+    supportImage: Boolean = false,
+    supportAudio: Boolean = false,
+  ) {
+    val currentModel = rememberedModel
+    val currentScore = capabilityScore(rememberedSupportImage, rememberedSupportAudio)
+    val newScore = capabilityScore(supportImage, supportAudio)
+    if (currentModel?.name == model.name && currentScore > newScore) {
+      Log.i(
+        TAG,
+        "Keeping existing Edge Server binding for '${model.name}' because it has richer IO support",
+      )
+      return
+    }
+
     rememberedModel = model
     rememberedHelper = helper
     rememberedDisplayName = displayName
+    rememberedSupportImage = supportImage
+    rememberedSupportAudio = supportAudio
 
     // 今いる server / service に適用
     applyRememberedModelToServer()
@@ -154,6 +179,8 @@ object EdgeServerManager {
     rememberedModel = null
     rememberedHelper = null
     rememberedDisplayName = ""
+    rememberedSupportImage = false
+    rememberedSupportAudio = false
 
     server?.activeModel = null
     server?.activeModelHelper = null
@@ -194,5 +221,43 @@ object EdgeServerManager {
       port = port,
       modelName = rememberedDisplayName,
     )
+  }
+
+  fun recordRequestStart(prompt: String, imageCount: Int) {
+    _state.value =
+      _state.value.copy(
+        latestRequest = prompt,
+        latestResponse = "",
+        latestImageCount = imageCount,
+        requestInProgress = true,
+        latestError = "",
+      )
+  }
+
+  fun appendResponseChunk(chunk: String) {
+    if (chunk.isEmpty()) {
+      return
+    }
+    _state.value = _state.value.copy(latestResponse = _state.value.latestResponse + chunk)
+  }
+
+  fun recordRequestDone() {
+    _state.value = _state.value.copy(requestInProgress = false)
+  }
+
+  fun recordRequestError(message: String) {
+    _state.value =
+      _state.value.copy(requestInProgress = false, latestError = message.ifEmpty { "Unknown error" })
+  }
+
+  private fun capabilityScore(supportImage: Boolean, supportAudio: Boolean): Int {
+    var score = 0
+    if (supportImage) {
+      score += 2
+    }
+    if (supportAudio) {
+      score += 1
+    }
+    return score
   }
 }

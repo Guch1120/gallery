@@ -279,6 +279,60 @@ fun EdgeServerScreen(onBack: () -> Unit) {
             EndpointRow("POST", "/v1/chat/completions", "Chat (streaming & non-streaming)")
           }
         }
+
+        if (
+          state.latestRequest.isNotEmpty() ||
+            state.latestResponse.isNotEmpty() ||
+            state.latestError.isNotEmpty()
+        ) {
+          Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+          ) {
+            Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+              Text(
+                text = "Latest Response",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+              )
+              Text(
+                text =
+                  buildString {
+                    append(if (state.requestInProgress) "Streaming from PC" else "Last request")
+                    if (state.latestImageCount > 0) {
+                      append(" • images: ").append(state.latestImageCount)
+                    }
+                  },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+              )
+              if (state.latestRequest.isNotEmpty()) {
+                Text(
+                  text = state.latestRequest,
+                  fontFamily = FontFamily.Monospace,
+                  fontSize = 12.sp,
+                  lineHeight = 18.sp,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+              }
+              if (state.latestResponse.isNotEmpty()) {
+                Text(
+                  text = state.latestResponse,
+                  fontFamily = FontFamily.Monospace,
+                  fontSize = 12.sp,
+                  lineHeight = 18.sp,
+                )
+              }
+              if (state.latestError.isNotEmpty()) {
+                Text(
+                  text = state.latestError,
+                  fontSize = 12.sp,
+                  color = MaterialTheme.colorScheme.error,
+                )
+              }
+            }
+          }
+        }
       }
 
       Spacer(Modifier.height(24.dp))

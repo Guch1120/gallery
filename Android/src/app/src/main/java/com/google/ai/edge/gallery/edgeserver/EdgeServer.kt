@@ -16,16 +16,23 @@
 
 package com.google.ai.edge.gallery.edgeserver
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.util.Log
+import android.util.Base64
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.runtime.LlmModelHelper
 import com.google.gson.Gson
+import com.google.gson.JsonArray
+import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.google.gson.stream.JsonReader
+import java.io.File
 import fi.iki.elonen.NanoHTTPD
 import java.io.PipedInputStream
 import java.io.PipedOutputStream
+import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -56,7 +63,7 @@ class EdgeServer(
     const val DEFAULT_HOST = "0.0.0.0"
     const val DEFAULT_PORT = 8888
     const val DEFAULT_TIMEOUT_SECONDS = 300L
-    private const val MIME_JSON = "application/json"
+    private const val MIME_JSON = "application/json; charset=utf-8"
   }
 
   /** The active model, set via [EdgeServerManager.bindModel]. */
@@ -72,6 +79,12 @@ class EdgeServer(
 
   private val inferenceLock = ReentrantLock()
   private val gson = Gson()
+
+  private data class ChatRequestPayload(
+    val prompt: String,
+    val images: List<Bitmap>,
+    val promptPreview: String,
+  )
 
   // ───────────────────────────────────────────────────────────────────────
   // Request routing
@@ -147,7 +160,7 @@ class EdgeServer(
       return errorResponse(400, "Failed to parse request body: ${e.message}")
     }
 
-    val bodyStr = bodyFiles["postData"] ?: ""
+    val bodyStr = readRequestBody(bodyFiles)
     if (bodyStr.isEmpty()) {
       return errorResponse(400, "Empty request body")
     }
@@ -171,15 +184,15 @@ class EdgeServer(
       return errorResponse(400, "\"messages\" array is required and must not be empty")
     }
 
-    val prompt = buildPrompt(messages)
+    val payload = buildPromptPayload(messages)
     val stream = body.get("stream")?.asBoolean ?: false
     val requestId = "chatcmpl-${UUID.randomUUID().toString().take(12)}"
     val modelId = activeModelDisplayName.ifEmpty { model.name }
 
     return if (stream) {
-      handleStreamingResponse(model, helper, prompt, requestId, modelId)
+      handleStreamingResponse(model, helper, payload, requestId, modelId)
     } else {
-      handleNonStreamingResponse(model, helper, prompt, requestId, modelId)
+      handleNonStreamingResponse(model, helper, payload, requestId, modelId)
     }
   }
 
@@ -195,27 +208,45 @@ class EdgeServer(
    *  - Array of `{"type":"text","text":"..."}` (multi-modal format)
    *  - Single object with a `text` field
    */
-  private fun buildPrompt(messages: com.google.gson.JsonArray): String = buildString {
-    for (el in messages) {
-      val obj = el.asJsonObject
-      val role = obj.get("role")?.asString ?: "user"
-      val content = extractContent(obj.get("content"))
-      if (content.isNotEmpty()) {
-        append("<start_of_turn>$role\n$content<end_of_turn>\n")
+  private fun buildPromptPayload(messages: JsonArray): ChatRequestPayload {
+    val images = mutableListOf<Bitmap>()
+    val previewLines = mutableListOf<String>()
+    val prompt =
+      buildString {
+        for (el in messages) {
+          val obj = el.asJsonObject
+          val role = normalizeRole(obj.get("role")?.asString)
+          val content = extractContent(obj.get("content"), images)
+          if (content.isNotEmpty()) {
+            append("<start_of_turn>$role\n$content<end_of_turn>\n")
+            previewLines.add("$role: $content")
+          } else if (images.isNotEmpty()) {
+            previewLines.add("$role: [image x${images.size}]")
+          }
+        }
+        append("<start_of_turn>model\n")
       }
-    }
-    append("<start_of_turn>model\n")
+    return ChatRequestPayload(
+      prompt = prompt,
+      images = images,
+      promptPreview = previewLines.joinToString(separator = "\n").take(2000),
+    )
   }
 
   /** Extracts text from an OpenAI `content` field (String | Array | Object | null). */
-  private fun extractContent(element: com.google.gson.JsonElement?): String {
+  private fun extractContent(element: JsonElement?, images: MutableList<Bitmap>): String {
     if (element == null || element.isJsonNull) return ""
     if (element.isJsonPrimitive) return element.asString
     if (element.isJsonArray) {
       return buildString {
         for (part in element.asJsonArray) {
           if (part.isJsonObject) {
-            part.asJsonObject.get("text")?.asString?.let { append(it) }
+            val obj = part.asJsonObject
+            when (obj.get("type")?.asString ?: "") {
+              "text" -> obj.get("text")?.asString?.let { append(it) }
+              "image_url" -> decodeImagePart(obj)?.let { images.add(it) }
+              else -> obj.get("text")?.asString?.let { append(it) }
+            }
           } else if (part.isJsonPrimitive) {
             append(part.asString)
           }
@@ -223,7 +254,13 @@ class EdgeServer(
       }
     }
     if (element.isJsonObject) {
-      return element.asJsonObject.get("text")?.asString ?: element.toString()
+      val obj = element.asJsonObject
+      obj.get("text")?.asString?.let { return it }
+      decodeImagePart(obj)?.let {
+        images.add(it)
+        return ""
+      }
+      return element.toString()
     }
     return ""
   }
@@ -233,12 +270,14 @@ class EdgeServer(
   // ───────────────────────────────────────────────────────────────────────
 
   private fun handleStreamingResponse(
-    model: Model, helper: LlmModelHelper, prompt: String,
+    model: Model, helper: LlmModelHelper, payload: ChatRequestPayload,
     requestId: String, modelId: String,
   ): Response {
     if (!inferenceLock.tryLock(5, TimeUnit.SECONDS)) {
       return errorResponse(429, "Server busy. Try again later.")
     }
+
+    EdgeServerManager.recordRequestStart(payload.promptPreview, payload.images.size)
 
     val pipedOut = PipedOutputStream()
     val pipedIn = PipedInputStream(pipedOut, 64 * 1024)
@@ -249,46 +288,62 @@ class EdgeServer(
         val latch = CountDownLatch(1)
         helper.runInference(
           model = model,
-          input = prompt,
+          input = payload.prompt,
+          images = payload.images,
           resultListener = { partial, isDone, _ ->
             try {
               if (partial.isNotEmpty()) {
+                EdgeServerManager.appendResponseChunk(partial)
                 val chunk = sseChunk(requestId, modelId, partial, null)
-                pipedOut.write("data: $chunk\n\n".toByteArray())
+                pipedOut.write("data: $chunk\n\n".toByteArray(StandardCharsets.UTF_8))
                 pipedOut.flush()
               }
               if (isDone) {
-                pipedOut.write("data: ${sseChunk(requestId, modelId, "", "stop")}\n\n".toByteArray())
-                pipedOut.write("data: [DONE]\n\n".toByteArray())
+                pipedOut.write(
+                  "data: ${sseChunk(requestId, modelId, "", "stop")}\n\n".toByteArray(StandardCharsets.UTF_8)
+                )
+                pipedOut.write("data: [DONE]\n\n".toByteArray(StandardCharsets.UTF_8))
                 pipedOut.flush()
+                EdgeServerManager.recordRequestDone()
                 done.set(true)
                 latch.countDown()
               }
             } catch (e: Exception) {
               Log.e(TAG, "SSE write error", e)
+              EdgeServerManager.recordRequestError(e.message ?: "Streaming write failed")
               done.set(true); latch.countDown()
             }
           },
-          cleanUpListener = { if (!done.get()) { done.set(true); latch.countDown() } },
+          cleanUpListener = {
+            if (!done.get()) {
+              EdgeServerManager.recordRequestDone()
+              done.set(true)
+              latch.countDown()
+            }
+          },
           onError = { msg ->
             try {
-              pipedOut.write("data: {\"error\":{\"message\":\"${escapeJson(msg)}\"}}\n\n".toByteArray())
-              pipedOut.write("data: [DONE]\n\n".toByteArray())
+              pipedOut.write(
+                "data: {\"error\":{\"message\":\"${escapeJson(msg)}\"}}\n\n".toByteArray(StandardCharsets.UTF_8)
+              )
+              pipedOut.write("data: [DONE]\n\n".toByteArray(StandardCharsets.UTF_8))
               pipedOut.flush()
             } catch (_: Exception) {}
+            EdgeServerManager.recordRequestError(msg)
             done.set(true); latch.countDown()
           },
         )
         latch.await(timeoutSeconds, TimeUnit.SECONDS)
       } catch (e: Exception) {
         Log.e(TAG, "Inference error", e)
+        EdgeServerManager.recordRequestError(e.message ?: "Inference failed")
       } finally {
         try { pipedOut.close() } catch (_: Exception) {}
         inferenceLock.unlock()
       }
     }.start()
 
-    return newChunkedResponse(Response.Status.OK, "text/event-stream", pipedIn).apply {
+    return newChunkedResponse(Response.Status.OK, "text/event-stream; charset=utf-8", pipedIn).apply {
       addHeader("Cache-Control", "no-cache")
       addHeader("Connection", "keep-alive")
     }.applyCors()
@@ -299,28 +354,45 @@ class EdgeServer(
   // ───────────────────────────────────────────────────────────────────────
 
   private fun handleNonStreamingResponse(
-    model: Model, helper: LlmModelHelper, prompt: String,
+    model: Model, helper: LlmModelHelper, payload: ChatRequestPayload,
     requestId: String, modelId: String,
   ): Response {
     if (!inferenceLock.tryLock(5, TimeUnit.SECONDS)) {
       return errorResponse(429, "Server busy. Try again later.")
     }
     try {
+      EdgeServerManager.recordRequestStart(payload.promptPreview, payload.images.size)
       val result = StringBuilder()
       val latch = CountDownLatch(1)
       var errorMsg: String? = null
 
       helper.runInference(
-        model = model, input = prompt,
+        model = model,
+        input = payload.prompt,
+        images = payload.images,
         resultListener = { partial, isDone, _ ->
-          if (partial.isNotEmpty()) result.append(partial)
-          if (isDone) latch.countDown()
+          if (partial.isNotEmpty()) {
+            result.append(partial)
+            EdgeServerManager.appendResponseChunk(partial)
+          }
+          if (isDone) {
+            EdgeServerManager.recordRequestDone()
+            latch.countDown()
+          }
         },
-        cleanUpListener = { latch.countDown() },
-        onError = { msg -> errorMsg = msg; latch.countDown() },
+        cleanUpListener = {
+          EdgeServerManager.recordRequestDone()
+          latch.countDown()
+        },
+        onError = { msg ->
+          errorMsg = msg
+          EdgeServerManager.recordRequestError(msg)
+          latch.countDown()
+        },
       )
 
       if (!latch.await(timeoutSeconds, TimeUnit.SECONDS)) {
+        EdgeServerManager.recordRequestError("Inference timed out after ${timeoutSeconds}s")
         return errorResponse(504, "Inference timed out after ${timeoutSeconds}s")
       }
       if (errorMsg != null) {
@@ -359,6 +431,49 @@ class EdgeServer(
       Log.i(TAG, "Model available after ${waited / 1000}s")
     } else {
       Log.w(TAG, "Model not available after ${waited / 1000}s")
+    }
+  }
+
+  private fun normalizeRole(rawRole: String?): String {
+    return when (rawRole?.lowercase()) {
+      "assistant", "model" -> "model"
+      "system", "developer", "tool" -> "user"
+      else -> "user"
+    }
+  }
+
+  private fun readRequestBody(bodyFiles: Map<String, String>): String {
+    val postData = bodyFiles["postData"] ?: return ""
+    if (postData.trimStart().startsWith("{") || postData.trimStart().startsWith("[")) {
+      return postData
+    }
+    val file = File(postData)
+    return if (file.exists()) file.readText(StandardCharsets.UTF_8) else postData
+  }
+
+  private fun decodeImagePart(obj: JsonObject): Bitmap? {
+    val imageUrl = obj.getAsJsonObject("image_url") ?: return null
+    val url = imageUrl.get("url")?.asString ?: return null
+    return decodeBitmapFromImageUrl(url)
+  }
+
+  private fun decodeBitmapFromImageUrl(url: String): Bitmap? {
+    val rawBase64 =
+      when {
+        url.startsWith("data:", ignoreCase = true) -> url.substringAfter("base64,", "")
+        url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true) ->
+          return null
+        else -> url
+      }
+    if (rawBase64.isEmpty()) {
+      return null
+    }
+    return try {
+      val bytes = Base64.decode(rawBase64, Base64.DEFAULT)
+      BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+    } catch (e: IllegalArgumentException) {
+      Log.w(TAG, "Failed to decode image payload", e)
+      null
     }
   }
 

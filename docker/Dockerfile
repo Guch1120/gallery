@@ -6,8 +6,9 @@ ENV LANG=ja_JP.UTF-8
 ENV LC_ALL=ja_JP.UTF-8
 
 ENV ANDROID_HOME=/opt/android-sdk
+ENV ANDROID_SDK_ROOT=/opt/android-sdk
 ENV ANDROID_USER_HOME=/root/.android
-ENV PATH=${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${PATH}
+ENV PATH=${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${ANDROID_HOME}/build-tools/35.0.0:${PATH}
 
 RUN apt-get update && apt-get install -y \
     locales tzdata ca-certificates curl wget unzip zip xz-utils \
@@ -34,9 +35,11 @@ RUN yes | sdkmanager --licenses
 RUN sdkmanager \
     "platform-tools" \
     "platforms;android-35" \
-    "build-tools;35.0.0" \
-    "cmdline-tools;latest"
+    "build-tools;35.0.0"
 
 WORKDIR /workspace
 RUN echo "export PS1='\[\e[1;36m\]\u@\h\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]\$ '" >> /root/.bashrc
+RUN echo "export ANDROID_HOME=${ANDROID_HOME}" >> /root/.bashrc \
+ && echo "export ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}" >> /root/.bashrc \
+ && echo "export PATH=${PATH}" >> /root/.bashrc
 CMD ["sleep", "infinity"]

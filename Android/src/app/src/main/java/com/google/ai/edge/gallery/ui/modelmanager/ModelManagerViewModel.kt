@@ -54,6 +54,7 @@ import com.google.ai.edge.gallery.proto.AccessTokenData
 import com.google.ai.edge.gallery.proto.ImportedModel
 import com.google.ai.edge.gallery.proto.Theme
 import com.google.ai.edge.gallery.runtime.aicore.AICoreModelHelper
+import com.google.ai.edge.gallery.ui.llmchat.LlmModelInstance
 import com.google.gson.Gson
 import com.google.gson.JsonSyntaxException
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -395,11 +396,22 @@ constructor(
     onDone: () -> Unit = {},
   ) {
     viewModelScope.launch(Dispatchers.Default) {
+      val requiresImageSupport = task.id == BuiltInTaskId.LLM_ASK_IMAGE
+      val requiresAudioSupport = task.id == BuiltInTaskId.LLM_ASK_AUDIO
+      val hasCompatibleExistingInstance =
+        when (val instance = model.instance) {
+          is LlmModelInstance ->
+            (!requiresImageSupport || instance.supportImage) &&
+              (!requiresAudioSupport || instance.supportAudio)
+          else -> true
+        }
+
       // Skip if initialized already.
       if (
         !force &&
           uiState.value.modelInitializationStatus[model.name]?.status ==
-            ModelInitializationStatusType.INITIALIZED
+            ModelInitializationStatusType.INITIALIZED &&
+          hasCompatibleExistingInstance
       ) {
         Log.d(TAG, "Model '${model.name}' has been initialized. Skipping.")
         return@launch

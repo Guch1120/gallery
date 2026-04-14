@@ -50,7 +50,12 @@ import kotlinx.coroutines.CoroutineScope
 
 private const val TAG = "AGLlmChatModelHelper"
 
-data class LlmModelInstance(val engine: Engine, var conversation: Conversation)
+data class LlmModelInstance(
+  val engine: Engine,
+  var conversation: Conversation,
+  val supportImage: Boolean,
+  val supportAudio: Boolean,
+)
 
 object LlmChatModelHelper : LlmModelHelper {
   // Indexed by model name.
@@ -141,7 +146,13 @@ object LlmChatModelHelper : LlmModelHelper {
           )
         )
       ExperimentalFlags.enableConversationConstrainedDecoding = false
-      model.instance = LlmModelInstance(engine = engine, conversation = conversation)
+      model.instance =
+        LlmModelInstance(
+          engine = engine,
+          conversation = conversation,
+          supportImage = shouldEnableImage,
+          supportAudio = shouldEnableAudio,
+        )
     } catch (e: Exception) {
       onDone(cleanUpMediapipeTaskErrorMessage(e.message ?: "Unknown error"))
       return
@@ -263,6 +274,15 @@ object LlmChatModelHelper : LlmModelHelper {
     }
 
     val conversation = instance.conversation
+
+    if (images.isNotEmpty() && !instance.supportImage) {
+      onError("This model session was initialized without image support.")
+      return
+    }
+    if (audioClips.isNotEmpty() && !instance.supportAudio) {
+      onError("This model session was initialized without audio support.")
+      return
+    }
 
     val contents = mutableListOf<Content>()
     for (image in images) {

@@ -194,10 +194,22 @@ fun GalleryNavHost(
     if (downloaded.isNotEmpty()) {
       val model = downloaded.first()
       if (model.instance == null) {
-        // Find a non-agent task (AgentChat requires SkillManagerViewModel which isn't ready yet)
-        val task = modelManagerViewModel.uiState.value.tasks.find { t ->
-          t.models.any { it.name == model.name } && t.id != com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_AGENT_CHAT
-        }
+        // Prefer sessions that preserve multimodal support for Edge Server use.
+        val preferredTaskIds =
+          listOf(
+            com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_ASK_IMAGE,
+            com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_ASK_AUDIO,
+            com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_CHAT,
+          )
+        val availableTasks =
+          modelManagerViewModel.uiState.value.tasks.filter { t ->
+            t.models.any { it.name == model.name } &&
+              t.id != com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_AGENT_CHAT
+          }
+        val task =
+          preferredTaskIds.firstNotNullOfOrNull { preferredId ->
+            availableTasks.find { it.id == preferredId }
+          } ?: availableTasks.firstOrNull()
         if (task != null) {
           Log.i(TAG, "Auto-initializing model '${model.name}' with task '${task.id}'")
           try {
@@ -215,6 +227,8 @@ fun GalleryNavHost(
                   model = freshModel,
                   helper = freshModel.runtimeHelper,
                   displayName = freshModel.displayName.ifEmpty { freshModel.name },
+                  supportImage = task.id == com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_ASK_IMAGE,
+                  supportAudio = task.id == com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_ASK_AUDIO,
                 )
               },
             )
@@ -232,6 +246,8 @@ fun GalleryNavHost(
           model = freshModel,
           helper = freshModel.runtimeHelper,
           displayName = freshModel.displayName.ifEmpty { freshModel.name },
+          supportImage = freshModel.llmSupportImage,
+          supportAudio = freshModel.llmSupportAudio,
         )
       }
     }
@@ -591,6 +607,8 @@ private fun CustomTaskScreen(
         model = selectedModel,
         helper = selectedModel.runtimeHelper,
         displayName = selectedModel.displayName.ifEmpty { selectedModel.name },
+        supportImage = task.id == com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_ASK_IMAGE,
+        supportAudio = task.id == com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_ASK_AUDIO,
       )
       com.google.ai.edge.gallery.claw.ClawAgent.activeModel = selectedModel
       com.google.ai.edge.gallery.claw.ClawAgent.activeModelHelper = selectedModel.runtimeHelper
