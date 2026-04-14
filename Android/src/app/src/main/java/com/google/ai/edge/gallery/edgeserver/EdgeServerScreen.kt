@@ -89,12 +89,19 @@ fun EdgeServerScreen(
   val context = LocalContext.current
   val clipboard = LocalClipboardManager.current
   val downloadedModels = modelManagerViewModel.getAllDownloadedModels()
+  val screenScrollState = rememberScrollState()
   var selectedModelName by remember { mutableStateOf("") }
   var showModelDropdown by remember { mutableStateOf(false) }
 
   LaunchedEffect(downloadedModels) {
     if (selectedModelName.isEmpty()) {
       selectedModelName = downloadedModels.firstOrNull()?.name ?: ""
+    }
+  }
+
+  LaunchedEffect(state.latestResponse, state.requestInProgress) {
+    if (state.requestInProgress && screenScrollState.maxValue - screenScrollState.value < 80) {
+      screenScrollState.animateScrollTo(screenScrollState.maxValue)
     }
   }
 
@@ -118,7 +125,7 @@ fun EdgeServerScreen(
         .fillMaxSize()
         .padding(padding)
         .padding(horizontal = 20.dp)
-        .verticalScroll(rememberScrollState()),
+        .verticalScroll(screenScrollState),
       verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
       Spacer(Modifier.height(4.dp))
@@ -270,6 +277,31 @@ fun EdgeServerScreen(
             val selectedModel =
               downloadedModels.find { it.name == selectedModelName } ?: downloadedModels.first()
             val initStatus = modelManagerUiState.modelInitializationStatus[selectedModel.name]?.status
+            val modelDisplayName = selectedModel.displayName.ifEmpty { selectedModel.name }
+            val edgeServerReady =
+              state.modelReady && state.modelName == modelDisplayName &&
+                initStatus == ModelInitializationStatusType.INITIALIZED
+            val statusText =
+              when {
+                initStatus == ModelInitializationStatusType.INITIALIZING -> "Loading for Edge Server"
+                edgeServerReady -> "Loaded for Edge Server"
+                initStatus == ModelInitializationStatusType.ERROR -> "Load failed"
+                initStatus == ModelInitializationStatusType.INITIALIZED -> "Loaded in app, not confirmed on Edge Server"
+                else -> "Downloaded, not loaded"
+              }
+            val statusColor =
+              when {
+                initStatus == ModelInitializationStatusType.INITIALIZING ->
+                  MaterialTheme.colorScheme.primary
+                edgeServerReady -> Color(0xFF2E7D32)
+                initStatus == ModelInitializationStatusType.ERROR -> MaterialTheme.colorScheme.error
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+              }
+            Text(
+              text = statusText,
+              style = MaterialTheme.typography.bodySmall,
+              color = statusColor,
+            )
             Button(
               onClick = {
                 val task = modelManagerViewModel.getPreferredEdgeServerTaskForModel(selectedModel)
@@ -433,6 +465,13 @@ fun EdgeServerScreen(
                   fontFamily = FontFamily.Monospace,
                   fontSize = 12.sp,
                   lineHeight = 18.sp,
+                )
+              }
+              if (state.requestInProgress) {
+                Text(
+                  text = "Auto-scroll follows while you stay at the bottom",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
               }
               if (state.latestError.isNotEmpty()) {

@@ -287,12 +287,55 @@ class EdgeServer(
     Thread {
       try {
         val latch = CountDownLatch(1)
+        fun finishStream(
+          finishReason: String? = "stop",
+          errorMessage: String? = null,
+        ) {
+          if (!done.compareAndSet(false, true)) {
+            return
+          }
+          try {
+            if (errorMessage != null) {
+              pipedOut.write(
+                "data: {\"error\":{\"message\":\"${escapeJson(errorMessage)}\"}}\n\n".toByteArray(
+                  StandardCharsets.UTF_8
+                )
+              )
+            } else {
+              pipedOut.write(
+                "data: ${sseChunk(requestId, modelId, "", finishReason)}\n\n".toByteArray(
+                  StandardCharsets.UTF_8
+                )
+              )
+            }
+            pipedOut.write("data: [DONE]\n\n".toByteArray(StandardCharsets.UTF_8))
+            pipedOut.flush()
+          } catch (e: IOException) {
+            if (e.message?.contains("Pipe closed") == true) {
+              Log.i(TAG, "Streaming client disconnected")
+            } else {
+              Log.e(TAG, "SSE finalize error", e)
+            }
+          } catch (e: Exception) {
+            Log.e(TAG, "SSE finalize error", e)
+          } finally {
+            if (errorMessage != null) {
+              EdgeServerManager.recordRequestError(errorMessage)
+            } else {
+              EdgeServerManager.recordRequestDone()
+            }
+            latch.countDown()
+          }
+        }
         helper.runInference(
           model = model,
           input = payload.prompt,
           images = payload.images,
           resultListener = { partial, isDone, _ ->
             try {
+              if (done.get()) {
+                return@runInference
+              }
               if (partial.isNotEmpty()) {
                 EdgeServerManager.appendResponseChunk(partial)
                 val chunk = sseChunk(requestId, modelId, partial, null)
@@ -300,51 +343,32 @@ class EdgeServer(
                 pipedOut.flush()
               }
               if (isDone) {
-                pipedOut.write(
-                  "data: ${sseChunk(requestId, modelId, "", "stop")}\n\n".toByteArray(StandardCharsets.UTF_8)
-                )
-                pipedOut.write("data: [DONE]\n\n".toByteArray(StandardCharsets.UTF_8))
-                pipedOut.flush()
-                EdgeServerManager.recordRequestDone()
-                done.set(true)
-                latch.countDown()
+                finishStream()
               }
             } catch (e: IOException) {
               if (e.message?.contains("Pipe closed") == true) {
                 Log.i(TAG, "Streaming client disconnected")
                 helper.stopResponse(model)
-                EdgeServerManager.recordRequestDone()
-                done.set(true)
-                latch.countDown()
+                if (done.compareAndSet(false, true)) {
+                  EdgeServerManager.recordRequestDone()
+                  latch.countDown()
+                }
               } else {
                 Log.e(TAG, "SSE write error", e)
-                EdgeServerManager.recordRequestError(e.message ?: "Streaming write failed")
-                done.set(true)
-                latch.countDown()
+                finishStream(errorMessage = e.message ?: "Streaming write failed")
               }
             } catch (e: Exception) {
               Log.e(TAG, "SSE write error", e)
-              EdgeServerManager.recordRequestError(e.message ?: "Streaming write failed")
-              done.set(true); latch.countDown()
+              finishStream(errorMessage = e.message ?: "Streaming write failed")
             }
           },
           cleanUpListener = {
             if (!done.get()) {
-              EdgeServerManager.recordRequestDone()
-              done.set(true)
-              latch.countDown()
+              finishStream()
             }
           },
           onError = { msg ->
-            try {
-              pipedOut.write(
-                "data: {\"error\":{\"message\":\"${escapeJson(msg)}\"}}\n\n".toByteArray(StandardCharsets.UTF_8)
-              )
-              pipedOut.write("data: [DONE]\n\n".toByteArray(StandardCharsets.UTF_8))
-              pipedOut.flush()
-            } catch (_: Exception) {}
-            EdgeServerManager.recordRequestError(msg)
-            done.set(true); latch.countDown()
+            finishStream(errorMessage = msg)
           },
         )
         latch.await(timeoutSeconds, TimeUnit.SECONDS)

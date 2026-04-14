@@ -60,10 +60,18 @@ class EdgeServerService : Service() {
     startForeground(NOTIFICATION_ID, buildNotification(host, port))
 
     if (server == null || !server!!.isAlive) {
-      server = EdgeServer(hostname = host, port = port)
+      server = EdgeServerManager.server
+      if (server == null || !server!!.isAlive) {
+        server = EdgeServer(hostname = host, port = port)
+      }
+      server?.modelFinder = EdgeServerManager.modelFinderCallback
       try {
-        server?.start()
-        Log.i(TAG, "Edge Server started on $host:$port")
+        if (server?.isAlive != true) {
+          server?.start()
+          Log.i(TAG, "Edge Server started on $host:$port")
+        } else {
+          Log.i(TAG, "Reusing existing Edge Server on $host:$port")
+        }
       } catch (e: Exception) {
         Log.e(TAG, "Failed to start Edge Server", e)
       }
@@ -93,6 +101,7 @@ class EdgeServerService : Service() {
 
   fun isServerRunning(): Boolean = server?.isAlive == true
   fun getPort(): Int = server?.listeningPort ?: 0
+  fun getServer(): EdgeServer? = server
 
   // ───────────────────────────────────────────────────────────────────────
   // Notification

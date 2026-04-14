@@ -29,6 +29,7 @@ object EdgeServerManager {
     val host: String = EdgeServer.DEFAULT_HOST,
     val port: Int = EdgeServer.DEFAULT_PORT,
     val modelName: String = "",
+    val modelReady: Boolean = false,
     val latestRequest: String = "",
     val latestResponse: String = "",
     val latestImageCount: Int = 0,
@@ -63,13 +64,16 @@ object EdgeServerManager {
   private val connection = object : ServiceConnection {
     override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
       service = (binder as EdgeServerService.LocalBinder).getService()
+      server = service?.getServer()
       bound = true
+      applyRememberedModelToServer()
       applyRememberedModelToService()
       refreshState()
       Log.i(TAG, "Service connected")
     }
 
     override fun onServiceDisconnected(name: ComponentName?) {
+      server = null
       service = null
       bound = false
       refreshState()
@@ -83,22 +87,6 @@ object EdgeServerManager {
     host: String = EdgeServer.DEFAULT_HOST,
     port: Int = EdgeServer.DEFAULT_PORT,
   ) {
-    if (server == null || !server!!.isAlive) {
-      server = EdgeServer(hostname = host, port = port).also {
-        it.modelFinder = modelFinderCallback
-      }
-
-      // ここで remembered モデルを先に再適用
-      applyRememberedModelToServer()
-
-      try {
-        server?.start()
-        Log.i(TAG, "Server started on $host:$port")
-      } catch (e: Exception) {
-        Log.e(TAG, "Failed to start server", e)
-      }
-    }
-
     val intent = Intent(context, EdgeServerService::class.java).apply {
       putExtra("host", host)
       putExtra("port", port)
@@ -112,12 +100,12 @@ object EdgeServerManager {
       host = host,
       port = port,
       modelName = rememberedDisplayName,
+      modelReady = rememberedModel?.instance != null,
     )
   }
 
   /** Stop the server and foreground service. */
   fun stopServer(context: Context) {
-    server?.stop()
     server = null
 
     if (bound) {
@@ -136,6 +124,7 @@ object EdgeServerManager {
     _state.value = _state.value.copy(
       isRunning = false,
       modelName = rememberedDisplayName,
+      modelReady = rememberedModel?.instance != null,
     )
 
     Log.i(TAG, "Server stopped")
@@ -170,7 +159,7 @@ object EdgeServerManager {
     applyRememberedModelToServer()
     applyRememberedModelToService()
 
-    _state.value = _state.value.copy(modelName = displayName)
+    _state.value = _state.value.copy(modelName = displayName, modelReady = model.instance != null)
     Log.i(TAG, "Model bound: $displayName")
   }
 
@@ -188,7 +177,7 @@ object EdgeServerManager {
 
     service?.clearActiveModel()
 
-    _state.value = _state.value.copy(modelName = "")
+    _state.value = _state.value.copy(modelName = "", modelReady = false)
   }
 
   private fun applyRememberedModelToServer() {
@@ -220,6 +209,7 @@ object EdgeServerManager {
       isRunning = running,
       port = port,
       modelName = rememberedDisplayName,
+      modelReady = rememberedModel?.instance != null,
     )
   }
 
