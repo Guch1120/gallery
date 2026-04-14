@@ -29,6 +29,7 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.google.gson.stream.JsonReader
 import java.io.File
+import java.io.IOException
 import fi.iki.elonen.NanoHTTPD
 import java.io.PipedInputStream
 import java.io.PipedOutputStream
@@ -305,6 +306,19 @@ class EdgeServer(
                 pipedOut.write("data: [DONE]\n\n".toByteArray(StandardCharsets.UTF_8))
                 pipedOut.flush()
                 EdgeServerManager.recordRequestDone()
+                done.set(true)
+                latch.countDown()
+              }
+            } catch (e: IOException) {
+              if (e.message?.contains("Pipe closed") == true) {
+                Log.i(TAG, "Streaming client disconnected")
+                helper.stopResponse(model)
+                EdgeServerManager.recordRequestDone()
+                done.set(true)
+                latch.countDown()
+              } else {
+                Log.e(TAG, "SSE write error", e)
+                EdgeServerManager.recordRequestError(e.message ?: "Streaming write failed")
                 done.set(true)
                 latch.countDown()
               }

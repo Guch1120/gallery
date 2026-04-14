@@ -38,6 +38,9 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -48,6 +51,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -65,6 +69,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.google.ai.edge.gallery.data.BuiltInTaskId
+import com.google.ai.edge.gallery.runtime.runtimeHelper
+import com.google.ai.edge.gallery.ui.modelmanager.ModelInitializationStatusType
+import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 
 /**
  * Full-screen control panel for the Edge Server.
@@ -72,10 +80,23 @@ import androidx.compose.ui.unit.sp
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun EdgeServerScreen(onBack: () -> Unit) {
+fun EdgeServerScreen(
+  modelManagerViewModel: ModelManagerViewModel,
+  onBack: () -> Unit,
+) {
   val state by EdgeServerManager.state.collectAsState()
+  val modelManagerUiState by modelManagerViewModel.uiState.collectAsState()
   val context = LocalContext.current
   val clipboard = LocalClipboardManager.current
+  val downloadedModels = modelManagerViewModel.getAllDownloadedModels()
+  var selectedModelName by remember { mutableStateOf("") }
+  var showModelDropdown by remember { mutableStateOf(false) }
+
+  LaunchedEffect(downloadedModels) {
+    if (selectedModelName.isEmpty()) {
+      selectedModelName = downloadedModels.firstOrNull()?.name ?: ""
+    }
+  }
 
   Scaffold(
     topBar = {
@@ -195,6 +216,97 @@ fun EdgeServerScreen(onBack: () -> Unit) {
               }
             },
           )
+        }
+      }
+
+      Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+      ) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+          Text(
+            text = "Model",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+          )
+          if (downloadedModels.isEmpty()) {
+            Text(
+              text = "No downloaded models available",
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+          } else {
+            Box {
+              val selectedModel =
+                downloadedModels.find { it.name == selectedModelName } ?: downloadedModels.first()
+              OutlinedTextField(
+                value = selectedModel.displayName.ifEmpty { selectedModel.name },
+                onValueChange = { },
+                readOnly = true,
+                label = { Text("Loaded model") },
+                modifier = Modifier.fillMaxWidth(),
+              )
+              Button(
+                onClick = { showModelDropdown = true },
+                modifier = Modifier.align(Alignment.CenterEnd).padding(end = 8.dp, top = 8.dp),
+              ) {
+                Text("Select")
+              }
+              DropdownMenu(
+                expanded = showModelDropdown,
+                onDismissRequest = { showModelDropdown = false },
+              ) {
+                downloadedModels.forEach { model ->
+                  DropdownMenuItem(
+                    text = { Text(model.displayName.ifEmpty { model.name }) },
+                    onClick = {
+                      selectedModelName = model.name
+                      showModelDropdown = false
+                    },
+                  )
+                }
+              }
+            }
+            val selectedModel =
+              downloadedModels.find { it.name == selectedModelName } ?: downloadedModels.first()
+            val initStatus = modelManagerUiState.modelInitializationStatus[selectedModel.name]?.status
+            Button(
+              onClick = {
+                val task = modelManagerViewModel.getPreferredEdgeServerTaskForModel(selectedModel)
+                if (task != null) {
+                  modelManagerViewModel.selectModel(selectedModel)
+                  modelManagerViewModel.initializeModel(
+                    context = context,
+                    task = task,
+                    model = selectedModel,
+                    force = true,
+                    onDone = {
+                      val freshModel =
+                        modelManagerViewModel.getModelByName(selectedModel.name) ?: selectedModel
+                      EdgeServerManager.bindModel(
+                        model = freshModel,
+                        helper = freshModel.runtimeHelper,
+                        displayName = freshModel.displayName.ifEmpty { freshModel.name },
+                        supportImage = task.id == BuiltInTaskId.LLM_ASK_IMAGE,
+                        supportAudio = task.id == BuiltInTaskId.LLM_ASK_AUDIO,
+                      )
+                    },
+                  )
+                }
+              },
+              enabled =
+                initStatus != ModelInitializationStatusType.INITIALIZING &&
+                  downloadedModels.isNotEmpty(),
+            ) {
+              Text(
+                if (initStatus == ModelInitializationStatusType.INITIALIZING) {
+                  "Loading..."
+                } else {
+                  "Load For Edge Server"
+                }
+              )
+            }
+          }
         }
       }
 

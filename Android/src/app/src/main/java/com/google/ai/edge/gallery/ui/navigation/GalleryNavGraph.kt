@@ -189,6 +189,45 @@ fun GalleryNavHost(
   // Auto-initialize the first downloaded model on app launch.
   // This makes Claw and Edge Server work without manually entering AI Chat.
   val autoInitContext = LocalContext.current
+  LaunchedEffect(autoInitContext) {
+    EdgeServerManager.modelFinderCallback = {
+      val downloaded = modelManagerViewModel.getAllDownloadedModels()
+      val model = downloaded.firstOrNull()
+      if (model != null) {
+        val task = modelManagerViewModel.getPreferredEdgeServerTaskForModel(model)
+        if (task != null) {
+          if (model.instance != null) {
+            val freshModel = modelManagerViewModel.getModelByName(model.name) ?: model
+            EdgeServerManager.bindModel(
+              model = freshModel,
+              helper = freshModel.runtimeHelper,
+              displayName = freshModel.displayName.ifEmpty { freshModel.name },
+              supportImage = task.id == com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_ASK_IMAGE,
+              supportAudio = task.id == com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_ASK_AUDIO,
+            )
+          } else {
+            modelManagerViewModel.initializeModel(
+              context = autoInitContext,
+              task = task,
+              model = model,
+              force = true,
+              onDone = {
+                val freshModel = modelManagerViewModel.getModelByName(model.name) ?: model
+                EdgeServerManager.bindModel(
+                  model = freshModel,
+                  helper = freshModel.runtimeHelper,
+                  displayName = freshModel.displayName.ifEmpty { freshModel.name },
+                  supportImage = task.id == com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_ASK_IMAGE,
+                  supportAudio = task.id == com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_ASK_AUDIO,
+                )
+              },
+            )
+          }
+        }
+      }
+    }
+  }
+
   LaunchedEffect(Unit) {
     val downloaded = modelManagerViewModel.getAllDownloadedModels()
     if (downloaded.isNotEmpty()) {
@@ -513,6 +552,7 @@ fun GalleryNavHost(
       exitTransition = { slideDownExit() },
     ) {
       EdgeServerScreen(
+        modelManagerViewModel = modelManagerViewModel,
         onBack = {
           enableHomeScreenAnimation = false
           navController.navigateUp()

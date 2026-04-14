@@ -254,6 +254,22 @@ constructor(
     }
   }
 
+  fun getPreferredEdgeServerTaskForModel(model: Model): Task? {
+    val preferredTaskIds =
+      listOf(
+        BuiltInTaskId.LLM_ASK_IMAGE,
+        BuiltInTaskId.LLM_ASK_AUDIO,
+        BuiltInTaskId.LLM_CHAT,
+      )
+    val availableTasks =
+      uiState.value.tasks.filter { task ->
+        task.models.any { it.name == model.name } && task.id != BuiltInTaskId.LLM_AGENT_CHAT
+      }
+    return preferredTaskIds.firstNotNullOfOrNull { preferredId ->
+      availableTasks.find { it.id == preferredId }
+    } ?: availableTasks.firstOrNull()
+  }
+
   fun processTasks() {
     val curTasks = getActiveCustomTasks().map { it.task }
     for (task in curTasks) {
