@@ -36,9 +36,9 @@ import java.io.PipedOutputStream
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.locks.ReentrantLock
 
 private const val TAG = "EdgeServer"
 
@@ -78,7 +78,7 @@ class EdgeServer(
    */
   @Volatile var modelFinder: (() -> Unit)? = null
 
-  private val inferenceLock = ReentrantLock()
+  private val inferenceSemaphore = Semaphore(1, true)
   private val gson = Gson()
 
   private data class ChatRequestPayload(
@@ -274,7 +274,7 @@ class EdgeServer(
     model: Model, helper: LlmModelHelper, payload: ChatRequestPayload,
     requestId: String, modelId: String,
   ): Response {
-    if (!inferenceLock.tryLock(5, TimeUnit.SECONDS)) {
+    if (!inferenceSemaphore.tryAcquire(5, TimeUnit.SECONDS)) {
       return errorResponse(429, "Server busy. Try again later.")
     }
 
@@ -377,7 +377,7 @@ class EdgeServer(
         EdgeServerManager.recordRequestError(e.message ?: "Inference failed")
       } finally {
         try { pipedOut.close() } catch (_: Exception) {}
-        inferenceLock.unlock()
+        inferenceSemaphore.release()
       }
     }.start()
 
@@ -395,7 +395,7 @@ class EdgeServer(
     model: Model, helper: LlmModelHelper, payload: ChatRequestPayload,
     requestId: String, modelId: String,
   ): Response {
-    if (!inferenceLock.tryLock(5, TimeUnit.SECONDS)) {
+    if (!inferenceSemaphore.tryAcquire(5, TimeUnit.SECONDS)) {
       return errorResponse(429, "Server busy. Try again later.")
     }
     try {
@@ -446,7 +446,7 @@ class EdgeServer(
       }
       return newFixedLengthResponse(Response.Status.OK, MIME_JSON, json).applyCors()
     } finally {
-      inferenceLock.unlock()
+      inferenceSemaphore.release()
     }
   }
 
