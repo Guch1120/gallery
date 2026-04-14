@@ -18,28 +18,17 @@
     foreground_color = "#ffffff"
     scrollback_lines = 5000
     use_custom_command = True
-    custom_command = "bash -lc '/workspace/docker/scripts/container-init.bash'"
-    use_system_font = False
-  [[android_logcat]]
-    background_color = "#300a24"
-    background_darkness = 0.9
-    background_type = transparent
-    font = Monospace 11
-    foreground_color = "#ffffff"
-    scrollback_lines = 5000
-    use_custom_command = True
-    custom_command = "bash -lc 'adb logcat'"
-    use_system_font = False
-  [[android_plain]]
-    background_color = "#300a24"
-    background_darkness = 0.9
-    background_type = transparent
-    font = Monospace 11
-    foreground_color = "#ffffff"
-    scrollback_lines = 5000
-    use_custom_command = True
     custom_command = bash
     use_system_font = False
+  [[android_stop]]
+    background_color = "#300a24"
+    background_darkness = 0.9
+    background_type = transparent
+    foreground_color = "#ffffff"
+    use_custom_command = True
+    custom_command = "bash -lc 'adb shell am force-stop com.google.aiedge.gallery'"
+  [[android_logcat]]
+  [[android_plain]]
 [layouts]
   [[default]]
     [[[window0]]]
