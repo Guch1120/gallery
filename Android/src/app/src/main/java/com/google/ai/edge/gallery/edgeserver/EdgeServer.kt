@@ -30,12 +30,12 @@ import com.google.gson.JsonParser
 import com.google.gson.stream.JsonReader
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import fi.iki.elonen.NanoHTTPD
-import java.io.PipedInputStream
-import java.io.PipedOutputStream
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -86,6 +86,60 @@ class EdgeServer(
     val images: List<Bitmap>,
     val promptPreview: String,
   )
+
+  private class StreamingInputStream : InputStream() {
+    private val chunks = LinkedBlockingQueue<ByteArray>()
+    @Volatile private var finished = false
+    @Volatile private var closed = false
+    private var currentChunk = ByteArray(0)
+    private var currentIndex = 0
+
+    fun enqueue(text: String): Boolean = enqueue(text.toByteArray(StandardCharsets.UTF_8))
+
+    fun enqueue(bytes: ByteArray): Boolean {
+      if (closed) {
+        return false
+      }
+      chunks.put(bytes)
+      return !closed
+    }
+
+    fun finish() {
+      finished = true
+    }
+
+    fun isClosedForProducer(): Boolean = closed
+
+    override fun read(): Int {
+      val oneByte = ByteArray(1)
+      val count = read(oneByte, 0, 1)
+      return if (count == -1) -1 else oneByte[0].toInt() and 0xFF
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+      if (length == 0) {
+        return 0
+      }
+      while (currentIndex >= currentChunk.size) {
+        if ((finished || closed) && chunks.isEmpty()) {
+          return -1
+        }
+        val nextChunk = chunks.poll(250, TimeUnit.MILLISECONDS) ?: continue
+        currentChunk = nextChunk
+        currentIndex = 0
+      }
+
+      val bytesToCopy = minOf(length, currentChunk.size - currentIndex)
+      System.arraycopy(currentChunk, currentIndex, buffer, offset, bytesToCopy)
+      currentIndex += bytesToCopy
+      return bytesToCopy
+    }
+
+    override fun close() {
+      closed = true
+      finished = true
+    }
+  }
 
   // ───────────────────────────────────────────────────────────────────────
   // Request routing
@@ -280,8 +334,7 @@ class EdgeServer(
 
     EdgeServerManager.recordRequestStart(payload.promptPreview, payload.images.size)
 
-    val pipedOut = PipedOutputStream()
-    val pipedIn = PipedInputStream(pipedOut, 64 * 1024)
+    val streamingInput = StreamingInputStream()
     val done = AtomicBoolean(false)
 
     Thread {
@@ -296,29 +349,23 @@ class EdgeServer(
           }
           try {
             if (errorMessage != null) {
-              pipedOut.write(
-                "data: {\"error\":{\"message\":\"${escapeJson(errorMessage)}\"}}\n\n".toByteArray(
-                  StandardCharsets.UTF_8
-                )
+              streamingInput.enqueue(
+                "data: {\"error\":{\"message\":\"${escapeJson(errorMessage)}\"}}\n\n"
               )
             } else {
-              pipedOut.write(
-                "data: ${sseChunk(requestId, modelId, "", finishReason)}\n\n".toByteArray(
-                  StandardCharsets.UTF_8
-                )
+              streamingInput.enqueue(
+                "data: ${sseChunk(requestId, modelId, "", finishReason)}\n\n"
               )
             }
-            pipedOut.write("data: [DONE]\n\n".toByteArray(StandardCharsets.UTF_8))
-            pipedOut.flush()
-          } catch (e: IOException) {
-            if (e.message?.contains("Pipe closed") == true) {
+            streamingInput.enqueue("data: [DONE]\n\n")
+          } catch (e: Exception) {
+            if (streamingInput.isClosedForProducer()) {
               Log.i(TAG, "Streaming client disconnected")
             } else {
               Log.e(TAG, "SSE finalize error", e)
             }
-          } catch (e: Exception) {
-            Log.e(TAG, "SSE finalize error", e)
           } finally {
+            streamingInput.finish()
             if (errorMessage != null) {
               EdgeServerManager.recordRequestError(errorMessage)
             } else {
@@ -339,14 +386,20 @@ class EdgeServer(
               if (partial.isNotEmpty()) {
                 EdgeServerManager.appendResponseChunk(partial)
                 val chunk = sseChunk(requestId, modelId, partial, null)
-                pipedOut.write("data: $chunk\n\n".toByteArray(StandardCharsets.UTF_8))
-                pipedOut.flush()
+                if (!streamingInput.enqueue("data: $chunk\n\n")) {
+                  Log.i(TAG, "Streaming client disconnected")
+                  helper.stopResponse(model)
+                  if (done.compareAndSet(false, true)) {
+                    EdgeServerManager.recordRequestDone()
+                    latch.countDown()
+                  }
+                }
               }
               if (isDone) {
                 finishStream()
               }
-            } catch (e: IOException) {
-              if (e.message?.contains("Pipe closed") == true) {
+            } catch (e: Exception) {
+              if (streamingInput.isClosedForProducer()) {
                 Log.i(TAG, "Streaming client disconnected")
                 helper.stopResponse(model)
                 if (done.compareAndSet(false, true)) {
@@ -357,9 +410,6 @@ class EdgeServer(
                 Log.e(TAG, "SSE write error", e)
                 finishStream(errorMessage = e.message ?: "Streaming write failed")
               }
-            } catch (e: Exception) {
-              Log.e(TAG, "SSE write error", e)
-              finishStream(errorMessage = e.message ?: "Streaming write failed")
             }
           },
           cleanUpListener = {
@@ -376,12 +426,16 @@ class EdgeServer(
         Log.e(TAG, "Inference error", e)
         EdgeServerManager.recordRequestError(e.message ?: "Inference failed")
       } finally {
-        try { pipedOut.close() } catch (_: Exception) {}
+        streamingInput.finish()
         inferenceSemaphore.release()
       }
     }.start()
 
-    return newChunkedResponse(Response.Status.OK, "text/event-stream; charset=utf-8", pipedIn).apply {
+    return newChunkedResponse(
+      Response.Status.OK,
+      "text/event-stream; charset=utf-8",
+      streamingInput,
+    ).apply {
       addHeader("Cache-Control", "no-cache")
       addHeader("Connection", "keep-alive")
     }.applyCors()
