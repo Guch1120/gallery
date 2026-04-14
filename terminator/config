@@ -1,0 +1,118 @@
+[global_config]
+  suppress_multiple_term_dialog = True
+[keybindings]
+[profiles]
+  [[default]]
+    background_color = "#300a24"
+    background_darkness = 0.9
+    background_type = transparent
+    font = Monospace 11
+    foreground_color = "#ffffff"
+    scrollback_lines = 5000
+    use_system_font = False
+  [[android_shell]]
+    background_color = "#300a24"
+    background_darkness = 0.9
+    background_type = transparent
+    font = Monospace 11
+    foreground_color = "#ffffff"
+    scrollback_lines = 5000
+    use_custom_command = True
+    custom_command = "bash -lc '/workspace/docker/scripts/container-init.bash'"
+    use_system_font = False
+  [[android_logcat]]
+    background_color = "#300a24"
+    background_darkness = 0.9
+    background_type = transparent
+    font = Monospace 11
+    foreground_color = "#ffffff"
+    scrollback_lines = 5000
+    use_custom_command = True
+    custom_command = "bash -lc 'adb logcat'"
+    use_system_font = False
+  [[android_plain]]
+    background_color = "#300a24"
+    background_darkness = 0.9
+    background_type = transparent
+    font = Monospace 11
+    foreground_color = "#ffffff"
+    scrollback_lines = 5000
+    use_custom_command = True
+    custom_command = bash
+    use_system_font = False
+[layouts]
+  [[default]]
+    [[[window0]]]
+      type = Window
+      parent = ""
+    [[[child1]]]
+      type = Terminal
+      parent = window0
+      profile = android_shell
+  [[androiddev]]
+    [[[child0]]]
+      type = Window
+      parent = ""
+      order = 0
+      position = 0:27
+      maximised = True
+      fullscreen = False
+      size = 1920, 1016
+      title = /bin/bash
+      last_active_term = 60ee1b0f-8c7e-476d-987b-380d0451a7f4
+      last_active_window = True
+    [[[child1]]]
+      type = VPaned
+      parent = child0
+      order = 0
+      position = 506
+      ratio = 0.5004945598417408
+    [[[terminal2]]]
+      type = Terminal
+      parent = child1
+      order = 0
+      profile = android_shell
+      uuid = f1e13594-a53d-4210-be72-9c4beef0e2f5
+    [[[child3]]]
+      type = HPaned
+      parent = child1
+      order = 1
+      position = 954
+      ratio = 0.49817232375979115
+    [[[child4]]]
+      type = HPaned
+      parent = child3
+      order = 0
+      position = 474
+      ratio = 0.4994731296101159
+    [[[terminal5]]]
+      type = Terminal
+      parent = child4
+      order = 0
+      profile = android_plain
+      uuid = 7640b77f-22b6-46bc-853c-d861c1562ccf
+    [[[terminal6]]]
+      type = Terminal
+      parent = child4
+      order = 1
+      profile = default
+      uuid = e106bf50-e51a-4d22-b096-ca543136fcf3
+    [[[child7]]]
+      type = HPaned
+      parent = child3
+      order = 1
+      position = 480
+      ratio = 0.5
+    [[[terminal8]]]
+      type = Terminal
+      parent = child7
+      order = 0
+      profile = default
+      uuid = 60ee1b0f-8c7e-476d-987b-380d0451a7f4
+    [[[terminal9]]]
+      type = Terminal
+      parent = child7
+      order = 1
+      profile = default
+      uuid = 7f66b1bf-7558-4c2a-9b54-b4e6b0f4e05a
+[plugins]
