@@ -1,0 +1,40 @@
+```json
+[
+  {
+    "object_name": "Red Plate",
+    "pos": "center"
+  },
+  {
+    "object_name": "Red Mug",
+    "pos": "center-left"
+  },
+  {
+    "object_name": "Red Bowl",
+    "pos": "center-right"
+  },
+  {
+    "object_name": "Orange Cup",
+    "pos": "far-right"
+  },
+  {
+    "object_name": "Green Cup",
+    "pos": "left"
+  },
+  {
+    "object_name": "Fork",
+    "pos": "left"
+  },
+  {
+    "object_name": "Knife",
+    "pos": "left"
+  },
+  {
+    "object_name": "Spoon",
+    "pos": "left"
+  },
+  {
+    "object_name": "White Table Surface",
+    "pos": "entire_foreground"
+  }
+]
+```

@@ -43,19 +43,19 @@
       type = Window
       parent = ""
       order = 0
-      position = 0:27
+      position = 70:27
       maximised = True
       fullscreen = False
-      size = 1920, 1016
+      size = 2490, 1376
       title = /bin/bash
-      last_active_term = 60ee1b0f-8c7e-476d-987b-380d0451a7f4
+      last_active_term = 7640b77f-22b6-46bc-853c-d861c1562ccf
       last_active_window = True
     [[[child1]]]
       type = VPaned
       parent = child0
       order = 0
-      position = 506
-      ratio = 0.5004945598417408
+      position = 686
+      ratio = 0.50036469730124
     [[[terminal2]]]
       type = Terminal
       parent = child1
@@ -66,19 +66,19 @@
       type = HPaned
       parent = child1
       order = 1
-      position = 954
-      ratio = 0.49817232375979115
+      position = 1238
+      ratio = 0.49818913480885313
     [[[child4]]]
       type = HPaned
       parent = child3
       order = 0
-      position = 474
-      ratio = 0.4994731296101159
+      position = 616
+      ratio = 0.49959448499594483
     [[[terminal5]]]
       type = Terminal
       parent = child4
       order = 0
-      profile = android_plain
+      profile = default
       uuid = 7640b77f-22b6-46bc-853c-d861c1562ccf
     [[[terminal6]]]
       type = Terminal
@@ -90,7 +90,7 @@
       type = HPaned
       parent = child3
       order = 1
-      position = 480
+      position = 623
       ratio = 0.5
     [[[terminal8]]]
       type = Terminal
