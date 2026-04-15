@@ -9,6 +9,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+DEFAULT_IMAGE_PATH = "test.png"
+
 
 def main() -> int:
     prompt_path = Path(os.environ.get("PROMPT_FILE", "prompt.txt"))
@@ -18,7 +20,13 @@ def main() -> int:
         "http://127.0.0.1:8888/v1/chat/completions",
     )
     model_name = os.environ.get("EDGE_SERVER_MODEL", "auto")
-    image_path = Path(sys.argv[1] if len(sys.argv) > 1 else "test.png")
+    # 既定の画像ファイルは DEFAULT_IMAGE_PATH で指定する。
+    # 毎回別の画像を使いたい場合は、実行時に
+    # `python3 gemma4_image.py /path/to/image.png`
+    # のように第1引数で画像パスを渡す。
+    # デフォルト画像そのものを変更したい場合は、
+    # このファイル上部の DEFAULT_IMAGE_PATH を書き換える。
+    image_path = Path(sys.argv[1] if len(sys.argv) > 1 else DEFAULT_IMAGE_PATH)
 
     if not prompt_path.is_file():
         print(f"prompt file not found: {prompt_path}", file=sys.stderr)
