@@ -20,6 +20,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
 import android.util.Base64
+import com.google.ai.edge.gallery.data.ConfigKeys
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.runtime.LlmModelHelper
 import com.google.gson.Gson
@@ -86,6 +87,14 @@ class EdgeServer(
     val images: List<Bitmap>,
     val promptPreview: String,
     val thinkingEnabled: Boolean,
+    val maxTokens: Int,
+    val topK: Int,
+    val topP: Float,
+    val temperature: Float,
+  )
+
+  private data class ModelConfigSnapshot(
+    val configValues: Map<String, Any>,
   )
 
   private class StreamingInputStream : InputStream() {
@@ -245,10 +254,15 @@ class EdgeServer(
       buildPromptPayload(
         messages = messages,
         thinkingEnabled = EdgeServerManager.resolveThinkingEnabled(requestedThinking),
+        maxTokens = EdgeServerManager.resolveMaxTokens(readIntField(body, "max_tokens", "maxTokens")),
+        topK = EdgeServerManager.resolveTopK(readIntField(body, "top_k", "topK", "topk")),
+        topP = EdgeServerManager.resolveTopP(readFloatField(body, "top_p", "topP", "topp")),
+        temperature =
+          EdgeServerManager.resolveTemperature(readFloatField(body, "temperature")),
       )
     Log.i(
       TAG,
-      "Chat request received: images=${payload.images.size}, thinking=${payload.thinkingEnabled}",
+      "Chat request received: images=${payload.images.size}, thinking=${payload.thinkingEnabled}, maxTokens=${payload.maxTokens}, topK=${payload.topK}, topP=${payload.topP}, temperature=${payload.temperature}",
     )
     val stream = body.get("stream")?.asBoolean ?: false
     val requestId = "chatcmpl-${UUID.randomUUID().toString().take(12)}"
@@ -273,7 +287,14 @@ class EdgeServer(
    *  - Array of `{"type":"text","text":"..."}` (multi-modal format)
    *  - Single object with a `text` field
    */
-  private fun buildPromptPayload(messages: JsonArray, thinkingEnabled: Boolean): ChatRequestPayload {
+  private fun buildPromptPayload(
+    messages: JsonArray,
+    thinkingEnabled: Boolean,
+    maxTokens: Int,
+    topK: Int,
+    topP: Float,
+    temperature: Float,
+  ): ChatRequestPayload {
     val images = mutableListOf<Bitmap>()
     val previewLines = mutableListOf<String>()
     val prompt =
@@ -296,6 +317,10 @@ class EdgeServer(
       images = images,
       promptPreview = previewLines.joinToString(separator = "\n").take(2000),
       thinkingEnabled = thinkingEnabled,
+      maxTokens = maxTokens,
+      topK = topK,
+      topP = topP,
+      temperature = temperature,
     )
   }
 
@@ -343,6 +368,7 @@ class EdgeServer(
       return errorResponse(429, "Server busy. Try again later.")
     }
 
+    val configSnapshot = applyRequestConfig(model, helper, payload)
     EdgeServerManager.recordRequestStart(
       payload.promptPreview,
       payload.images.size,
@@ -446,6 +472,7 @@ class EdgeServer(
         Log.e(TAG, "Inference error", e)
         EdgeServerManager.recordRequestError(e.message ?: "Inference failed")
       } finally {
+        restoreModelConfig(model, helper, configSnapshot)
         streamingInput.finish()
         inferenceSemaphore.release()
       }
@@ -472,6 +499,7 @@ class EdgeServer(
     if (!inferenceSemaphore.tryAcquire(5, TimeUnit.SECONDS)) {
       return errorResponse(429, "Server busy. Try again later.")
     }
+    val configSnapshot = applyRequestConfig(model, helper, payload)
     try {
       EdgeServerManager.recordRequestStart(
         payload.promptPreview,
@@ -529,6 +557,7 @@ class EdgeServer(
       }
       return newFixedLengthResponse(Response.Status.OK, MIME_JSON, json).applyCors()
     } finally {
+      restoreModelConfig(model, helper, configSnapshot)
       inferenceSemaphore.release()
     }
   }
@@ -573,6 +602,70 @@ class EdgeServer(
       return legacyFlag
     }
     return null
+  }
+
+  private fun readIntField(body: JsonObject, vararg names: String): Int? {
+    for (name in names) {
+      val value = body.get(name) ?: continue
+      if (!value.isJsonNull) {
+        return try {
+          value.asInt
+        } catch (_: Exception) {
+          null
+        }
+      }
+    }
+    return null
+  }
+
+  private fun readFloatField(body: JsonObject, vararg names: String): Float? {
+    for (name in names) {
+      val value = body.get(name) ?: continue
+      if (!value.isJsonNull) {
+        return try {
+          value.asFloat
+        } catch (_: Exception) {
+          null
+        }
+      }
+    }
+    return null
+  }
+
+  private fun applyRequestConfig(
+    model: Model,
+    helper: LlmModelHelper,
+    payload: ChatRequestPayload,
+  ): ModelConfigSnapshot {
+    val snapshot = ModelConfigSnapshot(configValues = model.configValues.toMap())
+    val nextConfigValues = snapshot.configValues.toMutableMap()
+    nextConfigValues[ConfigKeys.MAX_TOKENS.label] = payload.maxTokens
+    nextConfigValues[ConfigKeys.TOPK.label] = payload.topK
+    nextConfigValues[ConfigKeys.TOPP.label] = payload.topP
+    nextConfigValues[ConfigKeys.TEMPERATURE.label] = payload.temperature
+    nextConfigValues[ConfigKeys.ENABLE_THINKING.label] = payload.thinkingEnabled
+    model.configValues = nextConfigValues
+    // Edge Server は OpenAI 互換 API として毎回完全な messages を受け取るので、
+    // 前回の会話状態を引きずらないよう毎リクエスト前に会話をリセットする。
+    helper.resetConversation(
+      model = model,
+      supportImage = EdgeServerManager.supportsImage(),
+      supportAudio = EdgeServerManager.supportsAudio(),
+    )
+    return snapshot
+  }
+
+  private fun restoreModelConfig(
+    model: Model,
+    helper: LlmModelHelper,
+    snapshot: ModelConfigSnapshot,
+  ) {
+    model.configValues = snapshot.configValues
+    helper.resetConversation(
+      model = model,
+      supportImage = EdgeServerManager.supportsImage(),
+      supportAudio = EdgeServerManager.supportsAudio(),
+    )
   }
 
   private fun readRequestBody(bodyFiles: Map<String, String>): String {

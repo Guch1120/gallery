@@ -17,6 +17,10 @@ def main() -> int:
     )
     model_name = os.environ.get("EDGE_SERVER_MODEL", "auto")
     thinking_env = os.environ.get("EDGE_SERVER_THINKING")
+    max_tokens_env = os.environ.get("EDGE_SERVER_MAX_TOKENS")
+    top_k_env = os.environ.get("EDGE_SERVER_TOPK")
+    top_p_env = os.environ.get("EDGE_SERVER_TOPP")
+    temperature_env = os.environ.get("EDGE_SERVER_TEMPERATURE")
 
     if not prompt_path.is_file():
         print(f"prompt file not found: {prompt_path}", file=sys.stderr)
@@ -35,6 +39,14 @@ def main() -> int:
     }
     if thinking_env is not None:
         payload["thinking"] = thinking_env.lower() in {"1", "true", "on", "yes"}
+    if max_tokens_env is not None:
+        payload["max_tokens"] = int(max_tokens_env)
+    if top_k_env is not None:
+        payload["top_k"] = int(top_k_env)
+    if top_p_env is not None:
+        payload["top_p"] = float(top_p_env)
+    if temperature_env is not None:
+        payload["temperature"] = float(temperature_env)
 
     request = urllib.request.Request(
         endpoint_url,

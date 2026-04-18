@@ -70,7 +70,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.ai.edge.gallery.data.BuiltInTaskId
+import com.google.ai.edge.gallery.data.ConfigKeys
+import com.google.ai.edge.gallery.data.NumberSliderConfig
+import com.google.ai.edge.gallery.data.ValueType
 import com.google.ai.edge.gallery.runtime.runtimeHelper
+import com.google.ai.edge.gallery.ui.common.ConfigDialog
 import com.google.ai.edge.gallery.ui.modelmanager.ModelInitializationStatusType
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 
@@ -92,6 +96,7 @@ fun EdgeServerScreen(
   val screenScrollState = rememberScrollState()
   var selectedModelName by remember { mutableStateOf("") }
   var showModelDropdown by remember { mutableStateOf(false) }
+  var showSamplingConfigDialog by remember { mutableStateOf(false) }
 
   LaunchedEffect(downloadedModels) {
     if (selectedModelName.isEmpty()) {
@@ -99,7 +104,12 @@ fun EdgeServerScreen(
     }
   }
 
-  LaunchedEffect(state.latestResponse, state.requestInProgress) {
+  LaunchedEffect(
+    state.latestResponse,
+    state.latestThinkingResponse,
+    state.requestInProgress,
+    screenScrollState.maxValue,
+  ) {
     if (state.requestInProgress) {
       screenScrollState.scrollTo(screenScrollState.maxValue)
     }
@@ -223,6 +233,28 @@ fun EdgeServerScreen(
               }
             },
           )
+        }
+      }
+
+      Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+      ) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+          Text(
+            text = "Sampling",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+          )
+          Text(
+            text =
+              "max_tokens=${state.maxTokens}, topK=${state.topK}, topP=${"%.2f".format(state.topP)}, temperature=${"%.2f".format(state.temperature)}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+          Button(onClick = { showSamplingConfigDialog = true }) {
+            Text("Edit Sampling")
+          }
         }
       }
 
@@ -498,14 +530,6 @@ fun EdgeServerScreen(
                   color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
               }
-              if (state.latestResponse.isNotEmpty()) {
-                Text(
-                  text = state.latestResponse,
-                  fontFamily = FontFamily.Monospace,
-                  fontSize = 12.sp,
-                  lineHeight = 18.sp,
-                )
-              }
               if (state.latestThinkingResponse.isNotEmpty()) {
                 Text(
                   text = "Thinking",
@@ -518,6 +542,19 @@ fun EdgeServerScreen(
                   fontSize = 12.sp,
                   lineHeight = 18.sp,
                   color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+              }
+              if (state.latestResponse.isNotEmpty()) {
+                Text(
+                  text = "Response",
+                  style = MaterialTheme.typography.titleSmall,
+                  fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                  text = state.latestResponse,
+                  fontFamily = FontFamily.Monospace,
+                  fontSize = 12.sp,
+                  lineHeight = 18.sp,
                 )
               }
               if (state.requestInProgress) {
@@ -541,6 +578,62 @@ fun EdgeServerScreen(
 
       Spacer(Modifier.height(24.dp))
     }
+  }
+
+  if (showSamplingConfigDialog) {
+    ConfigDialog(
+      title = "Edge Server Sampling",
+      configs =
+        listOf(
+          NumberSliderConfig(
+            key = ConfigKeys.MAX_TOKENS,
+            sliderMin = 128f,
+            sliderMax = 8192f,
+            defaultValue = state.maxTokens.toFloat(),
+            valueType = ValueType.INT,
+          ),
+          NumberSliderConfig(
+            key = ConfigKeys.TOPK,
+            sliderMin = 1f,
+            sliderMax = 128f,
+            defaultValue = state.topK.toFloat(),
+            valueType = ValueType.INT,
+          ),
+          NumberSliderConfig(
+            key = ConfigKeys.TOPP,
+            sliderMin = 0.0f,
+            sliderMax = 1.0f,
+            defaultValue = state.topP,
+            valueType = ValueType.FLOAT,
+          ),
+          NumberSliderConfig(
+            key = ConfigKeys.TEMPERATURE,
+            sliderMin = 0.0f,
+            sliderMax = 2.0f,
+            defaultValue = state.temperature,
+            valueType = ValueType.FLOAT,
+          ),
+        ),
+      initialValues =
+        mapOf(
+          ConfigKeys.MAX_TOKENS.label to state.maxTokens.toFloat(),
+          ConfigKeys.TOPK.label to state.topK.toFloat(),
+          ConfigKeys.TOPP.label to state.topP,
+          ConfigKeys.TEMPERATURE.label to state.temperature,
+        ),
+      onDismissed = { showSamplingConfigDialog = false },
+      onOk = { values, _, _ ->
+        EdgeServerManager.setSamplingConfig(
+          maxTokens = (values[ConfigKeys.MAX_TOKENS.label] as? Float)?.toInt() ?: state.maxTokens,
+          topK = (values[ConfigKeys.TOPK.label] as? Float)?.toInt() ?: state.topK,
+          topP = values[ConfigKeys.TOPP.label] as? Float ?: state.topP,
+          temperature = values[ConfigKeys.TEMPERATURE.label] as? Float ?: state.temperature,
+        )
+        showSamplingConfigDialog = false
+      },
+      subtitle = "PC 側で未指定のときの既定値として使われます",
+      showCancel = true,
+    )
   }
 }
 

@@ -6,6 +6,11 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
 import android.util.Log
+import com.google.ai.edge.gallery.data.ConfigKeys
+import com.google.ai.edge.gallery.data.DEFAULT_MAX_TOKEN
+import com.google.ai.edge.gallery.data.DEFAULT_TEMPERATURE
+import com.google.ai.edge.gallery.data.DEFAULT_TOPK
+import com.google.ai.edge.gallery.data.DEFAULT_TOPP
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.runtime.LlmModelHelper
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,6 +37,10 @@ object EdgeServerManager {
     val modelReady: Boolean = false,
     val modelSupportsThinking: Boolean = false,
     val thinkingEnabled: Boolean = false,
+    val maxTokens: Int = DEFAULT_MAX_TOKEN,
+    val topK: Int = DEFAULT_TOPK,
+    val topP: Float = DEFAULT_TOPP,
+    val temperature: Float = DEFAULT_TEMPERATURE,
     val latestRequest: String = "",
     val latestResponse: String = "",
     val latestThinkingResponse: String = "",
@@ -66,6 +75,10 @@ object EdgeServerManager {
   @Volatile private var rememberedSupportAudio: Boolean = false
   @Volatile private var rememberedSupportThinking: Boolean = false
   @Volatile private var rememberedThinkingEnabled: Boolean = false
+  @Volatile private var rememberedMaxTokens: Int = DEFAULT_MAX_TOKEN
+  @Volatile private var rememberedTopK: Int = DEFAULT_TOPK
+  @Volatile private var rememberedTopP: Float = DEFAULT_TOPP
+  @Volatile private var rememberedTemperature: Float = DEFAULT_TEMPERATURE
 
   private val connection = object : ServiceConnection {
     override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -109,6 +122,10 @@ object EdgeServerManager {
       modelReady = rememberedModel?.instance != null,
       modelSupportsThinking = rememberedSupportThinking,
       thinkingEnabled = rememberedThinkingEnabled && rememberedSupportThinking,
+      maxTokens = rememberedMaxTokens,
+      topK = rememberedTopK,
+      topP = rememberedTopP,
+      temperature = rememberedTemperature,
     )
   }
 
@@ -135,6 +152,10 @@ object EdgeServerManager {
       modelReady = rememberedModel?.instance != null,
       modelSupportsThinking = rememberedSupportThinking,
       thinkingEnabled = rememberedThinkingEnabled && rememberedSupportThinking,
+      maxTokens = rememberedMaxTokens,
+      topK = rememberedTopK,
+      topP = rememberedTopP,
+      temperature = rememberedTemperature,
     )
 
     Log.i(TAG, "Server stopped")
@@ -166,6 +187,12 @@ object EdgeServerManager {
     rememberedSupportImage = supportImage
     rememberedSupportAudio = supportAudio
     rememberedSupportThinking = supportThinking
+    rememberedMaxTokens =
+      model.getIntConfigValue(key = ConfigKeys.MAX_TOKENS, defaultValue = DEFAULT_MAX_TOKEN)
+    rememberedTopK = model.getIntConfigValue(key = ConfigKeys.TOPK, defaultValue = DEFAULT_TOPK)
+    rememberedTopP = model.getFloatConfigValue(key = ConfigKeys.TOPP, defaultValue = DEFAULT_TOPP)
+    rememberedTemperature =
+      model.getFloatConfigValue(key = ConfigKeys.TEMPERATURE, defaultValue = DEFAULT_TEMPERATURE)
     if (!supportThinking) {
       rememberedThinkingEnabled = false
     }
@@ -180,6 +207,10 @@ object EdgeServerManager {
         modelReady = model.instance != null,
         modelSupportsThinking = supportThinking,
         thinkingEnabled = rememberedThinkingEnabled && supportThinking,
+        maxTokens = rememberedMaxTokens,
+        topK = rememberedTopK,
+        topP = rememberedTopP,
+        temperature = rememberedTemperature,
       )
     Log.i(TAG, "Model bound: $displayName")
   }
@@ -193,6 +224,10 @@ object EdgeServerManager {
     rememberedSupportAudio = false
     rememberedSupportThinking = false
     rememberedThinkingEnabled = false
+    rememberedMaxTokens = DEFAULT_MAX_TOKEN
+    rememberedTopK = DEFAULT_TOPK
+    rememberedTopP = DEFAULT_TOPP
+    rememberedTemperature = DEFAULT_TEMPERATURE
 
     server?.activeModel = null
     server?.activeModelHelper = null
@@ -206,6 +241,10 @@ object EdgeServerManager {
         modelReady = false,
         modelSupportsThinking = false,
         thinkingEnabled = false,
+        maxTokens = rememberedMaxTokens,
+        topK = rememberedTopK,
+        topP = rememberedTopP,
+        temperature = rememberedTemperature,
       )
   }
 
@@ -225,6 +264,32 @@ object EdgeServerManager {
       else -> requestedValue
     }
   }
+
+  fun setSamplingConfig(maxTokens: Int, topK: Int, topP: Float, temperature: Float) {
+    rememberedMaxTokens = maxTokens
+    rememberedTopK = topK
+    rememberedTopP = topP
+    rememberedTemperature = temperature
+    _state.value =
+      _state.value.copy(
+        maxTokens = rememberedMaxTokens,
+        topK = rememberedTopK,
+        topP = rememberedTopP,
+        temperature = rememberedTemperature,
+      )
+  }
+
+  fun resolveMaxTokens(requestedValue: Int?): Int = requestedValue ?: rememberedMaxTokens
+
+  fun resolveTopK(requestedValue: Int?): Int = requestedValue ?: rememberedTopK
+
+  fun resolveTopP(requestedValue: Float?): Float = requestedValue ?: rememberedTopP
+
+  fun resolveTemperature(requestedValue: Float?): Float = requestedValue ?: rememberedTemperature
+
+  fun supportsImage(): Boolean = rememberedSupportImage
+
+  fun supportsAudio(): Boolean = rememberedSupportAudio
 
   private fun applyRememberedModelToServer() {
     val model = rememberedModel
@@ -258,6 +323,10 @@ object EdgeServerManager {
       modelReady = rememberedModel?.instance != null,
       modelSupportsThinking = rememberedSupportThinking,
       thinkingEnabled = rememberedThinkingEnabled && rememberedSupportThinking,
+      maxTokens = rememberedMaxTokens,
+      topK = rememberedTopK,
+      topP = rememberedTopP,
+      temperature = rememberedTemperature,
     )
   }
 

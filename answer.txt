@@ -1,36 +1,40 @@
 ```json
 [
   {
-    "object_name": "red plate",
+    "object_name": "Red Plate",
     "pos": "center-left"
   },
   {
-    "object_name": "red mug/cup",
+    "object_name": "Red Mug",
     "pos": "center"
   },
   {
-    "object_name": "red bowl",
+    "object_name": "Green Cup",
+    "pos": "left-center"
+  },
+  {
+    "object_name": "Fork",
+    "pos": "left"
+  },
+  {
+    "object_name": "Knife",
+    "pos": "left"
+  },
+  {
+    "object_name": "Spoon",
     "pos": "center-right"
   },
   {
-    "object_name": "green cup",
-    "pos": "left"
+    "object_name": "Red Bowl",
+    "pos": "right-center"
   },
   {
-    "object_name": "fork",
-    "pos": "left"
-  },
-  {
-    "object_name": "knife",
-    "pos": "left"
-  },
-  {
-    "object_name": "spoon",
-    "pos": "left"
-  },
-  {
-    "object_name": "orange cup/mug",
+    "object_name": "White Bowl",
     "pos": "right"
+  },
+  {
+    "object_name": "Orange Cup",
+    "pos": "far-right"
   }
 ]
 ```
