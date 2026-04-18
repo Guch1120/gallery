@@ -1,0 +1,23 @@
+name: flutter_llama_gallery_app
+description: Flutter shell for local GGUF chat built on llama_cpp_dart.
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.2.0 <4.0.0"
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  file_picker: ^11.0.2
+  llama_cpp_dart:
+    path: ../llama_cpp_dart
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

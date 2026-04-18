@@ -204,6 +204,7 @@ fun GalleryNavHost(
               displayName = freshModel.displayName.ifEmpty { freshModel.name },
               supportImage = task.id == com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_ASK_IMAGE,
               supportAudio = task.id == com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_ASK_AUDIO,
+              supportThinking = freshModel.llmSupportThinking,
             )
           } else {
             modelManagerViewModel.initializeModel(
@@ -219,6 +220,7 @@ fun GalleryNavHost(
                   displayName = freshModel.displayName.ifEmpty { freshModel.name },
                   supportImage = task.id == com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_ASK_IMAGE,
                   supportAudio = task.id == com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_ASK_AUDIO,
+                  supportThinking = freshModel.llmSupportThinking,
                 )
               },
             )
@@ -268,6 +270,7 @@ fun GalleryNavHost(
                   displayName = freshModel.displayName.ifEmpty { freshModel.name },
                   supportImage = task.id == com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_ASK_IMAGE,
                   supportAudio = task.id == com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_ASK_AUDIO,
+                  supportThinking = freshModel.llmSupportThinking,
                 )
               },
             )
@@ -287,6 +290,7 @@ fun GalleryNavHost(
           displayName = freshModel.displayName.ifEmpty { freshModel.name },
           supportImage = freshModel.llmSupportImage,
           supportAudio = freshModel.llmSupportAudio,
+          supportThinking = freshModel.llmSupportThinking,
         )
       }
     }
@@ -649,6 +653,7 @@ private fun CustomTaskScreen(
         displayName = selectedModel.displayName.ifEmpty { selectedModel.name },
         supportImage = task.id == com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_ASK_IMAGE,
         supportAudio = task.id == com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_ASK_AUDIO,
+        supportThinking = selectedModel.llmSupportThinking,
       )
       com.google.ai.edge.gallery.claw.ClawAgent.activeModel = selectedModel
       com.google.ai.edge.gallery.claw.ClawAgent.activeModelHelper = selectedModel.runtimeHelper

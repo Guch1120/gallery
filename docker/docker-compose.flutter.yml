@@ -1,0 +1,23 @@
+services:
+  flutter-dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.flutter
+    image: flutter-dev:latest
+    container_name: flutter-dev
+    volumes:
+      - ..:/workspace:rw
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /dev:/dev
+    environment:
+      - DISPLAY=${DISPLAY}
+      - ANDROID_HOME=/opt/android-sdk
+      - ANDROID_SDK_ROOT=/opt/android-sdk
+      - ANDROID_USER_HOME=/root/.android
+      - ADB_LIBUSB=1
+    network_mode: host
+    ipc: host
+    privileged: true
+    devices:
+      - /dev:/dev
+    command: sleep infinity

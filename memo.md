@@ -37,3 +37,17 @@ curl http://127.0.0.1:8888/v1/chat/completions \
 -H "Content-Type: application/json; charset=utf-8" \
 -d '{"model":"auto","messages":[{"role":"user","content":"日本語で自己紹介してください。"}]}'
 ```
+
+プロンプトテキストファイルから推論
+```python
+python3 gemma4_txt.py
+```
+
+画像から推論．プロンプトはprompt.txtを使う．
+```python
+python3 gemma4_image.py
+```
+画像ファイルパスを指定するなら
+```python
+python3 gemma4_image.py ファイルパス
+```

@@ -1,40 +1,36 @@
 ```json
 [
   {
-    "object_name": "Red Plate",
-    "pos": "center"
-  },
-  {
-    "object_name": "Red Mug",
+    "object_name": "red plate",
     "pos": "center-left"
   },
   {
-    "object_name": "Red Bowl",
+    "object_name": "red mug/cup",
+    "pos": "center"
+  },
+  {
+    "object_name": "red bowl",
     "pos": "center-right"
   },
   {
-    "object_name": "Orange Cup",
-    "pos": "far-right"
-  },
-  {
-    "object_name": "Green Cup",
+    "object_name": "green cup",
     "pos": "left"
   },
   {
-    "object_name": "Fork",
+    "object_name": "fork",
     "pos": "left"
   },
   {
-    "object_name": "Knife",
+    "object_name": "knife",
     "pos": "left"
   },
   {
-    "object_name": "Spoon",
+    "object_name": "spoon",
     "pos": "left"
   },
   {
-    "object_name": "White Table Surface",
-    "pos": "entire_foreground"
+    "object_name": "orange cup/mug",
+    "pos": "right"
   }
 ]
 ```

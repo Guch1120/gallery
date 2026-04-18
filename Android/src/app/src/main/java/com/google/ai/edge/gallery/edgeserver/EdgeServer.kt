@@ -85,6 +85,7 @@ class EdgeServer(
     val prompt: String,
     val images: List<Bitmap>,
     val promptPreview: String,
+    val thinkingEnabled: Boolean,
   )
 
   private class StreamingInputStream : InputStream() {
@@ -239,7 +240,16 @@ class EdgeServer(
       return errorResponse(400, "\"messages\" array is required and must not be empty")
     }
 
-    val payload = buildPromptPayload(messages)
+    val requestedThinking = readThinkingFlag(body)
+    val payload =
+      buildPromptPayload(
+        messages = messages,
+        thinkingEnabled = EdgeServerManager.resolveThinkingEnabled(requestedThinking),
+      )
+    Log.i(
+      TAG,
+      "Chat request received: images=${payload.images.size}, thinking=${payload.thinkingEnabled}",
+    )
     val stream = body.get("stream")?.asBoolean ?: false
     val requestId = "chatcmpl-${UUID.randomUUID().toString().take(12)}"
     val modelId = activeModelDisplayName.ifEmpty { model.name }
@@ -263,7 +273,7 @@ class EdgeServer(
    *  - Array of `{"type":"text","text":"..."}` (multi-modal format)
    *  - Single object with a `text` field
    */
-  private fun buildPromptPayload(messages: JsonArray): ChatRequestPayload {
+  private fun buildPromptPayload(messages: JsonArray, thinkingEnabled: Boolean): ChatRequestPayload {
     val images = mutableListOf<Bitmap>()
     val previewLines = mutableListOf<String>()
     val prompt =
@@ -285,6 +295,7 @@ class EdgeServer(
       prompt = prompt,
       images = images,
       promptPreview = previewLines.joinToString(separator = "\n").take(2000),
+      thinkingEnabled = thinkingEnabled,
     )
   }
 
@@ -332,7 +343,11 @@ class EdgeServer(
       return errorResponse(429, "Server busy. Try again later.")
     }
 
-    EdgeServerManager.recordRequestStart(payload.promptPreview, payload.images.size)
+    EdgeServerManager.recordRequestStart(
+      payload.promptPreview,
+      payload.images.size,
+      payload.thinkingEnabled,
+    )
 
     val streamingInput = StreamingInputStream()
     val done = AtomicBoolean(false)
@@ -378,10 +393,13 @@ class EdgeServer(
           model = model,
           input = payload.prompt,
           images = payload.images,
-          resultListener = { partial, isDone, _ ->
+          resultListener = { partial, isDone, partialThinking ->
             try {
               if (done.get()) {
                 return@runInference
+              }
+              if (partialThinking != null && partialThinking.isNotEmpty()) {
+                EdgeServerManager.appendThinkingChunk(partialThinking)
               }
               if (partial.isNotEmpty()) {
                 EdgeServerManager.appendResponseChunk(partial)
@@ -420,6 +438,8 @@ class EdgeServer(
           onError = { msg ->
             finishStream(errorMessage = msg)
           },
+          extraContext =
+            if (payload.thinkingEnabled) mapOf("enable_thinking" to "true") else emptyMap(),
         )
         latch.await(timeoutSeconds, TimeUnit.SECONDS)
       } catch (e: Exception) {
@@ -453,7 +473,11 @@ class EdgeServer(
       return errorResponse(429, "Server busy. Try again later.")
     }
     try {
-      EdgeServerManager.recordRequestStart(payload.promptPreview, payload.images.size)
+      EdgeServerManager.recordRequestStart(
+        payload.promptPreview,
+        payload.images.size,
+        payload.thinkingEnabled,
+      )
       val result = StringBuilder()
       val latch = CountDownLatch(1)
       var errorMsg: String? = null
@@ -462,7 +486,10 @@ class EdgeServer(
         model = model,
         input = payload.prompt,
         images = payload.images,
-        resultListener = { partial, isDone, _ ->
+        resultListener = { partial, isDone, partialThinking ->
+          if (partialThinking != null && partialThinking.isNotEmpty()) {
+            EdgeServerManager.appendThinkingChunk(partialThinking)
+          }
           if (partial.isNotEmpty()) {
             result.append(partial)
             EdgeServerManager.appendResponseChunk(partial)
@@ -481,6 +508,8 @@ class EdgeServer(
           EdgeServerManager.recordRequestError(msg)
           latch.countDown()
         },
+        extraContext =
+          if (payload.thinkingEnabled) mapOf("enable_thinking" to "true") else emptyMap(),
       )
 
       if (!latch.await(timeoutSeconds, TimeUnit.SECONDS)) {
@@ -532,6 +561,18 @@ class EdgeServer(
       "system", "developer", "tool" -> "user"
       else -> "user"
     }
+  }
+
+  private fun readThinkingFlag(body: JsonObject): Boolean? {
+    val directFlag = body.get("thinking")?.takeIf { !it.isJsonNull }?.asBoolean
+    if (directFlag != null) {
+      return directFlag
+    }
+    val legacyFlag = body.get("enable_thinking")?.takeIf { !it.isJsonNull }?.asBoolean
+    if (legacyFlag != null) {
+      return legacyFlag
+    }
+    return null
   }
 
   private fun readRequestBody(bodyFiles: Map<String, String>): String {

@@ -30,8 +30,12 @@ object EdgeServerManager {
     val port: Int = EdgeServer.DEFAULT_PORT,
     val modelName: String = "",
     val modelReady: Boolean = false,
+    val modelSupportsThinking: Boolean = false,
+    val thinkingEnabled: Boolean = false,
     val latestRequest: String = "",
     val latestResponse: String = "",
+    val latestThinkingResponse: String = "",
+    val latestThinkingEnabled: Boolean = false,
     val latestImageCount: Int = 0,
     val requestInProgress: Boolean = false,
     val latestError: String = "",
@@ -60,6 +64,8 @@ object EdgeServerManager {
   @Volatile private var rememberedDisplayName: String = ""
   @Volatile private var rememberedSupportImage: Boolean = false
   @Volatile private var rememberedSupportAudio: Boolean = false
+  @Volatile private var rememberedSupportThinking: Boolean = false
+  @Volatile private var rememberedThinkingEnabled: Boolean = false
 
   private val connection = object : ServiceConnection {
     override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -101,6 +107,8 @@ object EdgeServerManager {
       port = port,
       modelName = rememberedDisplayName,
       modelReady = rememberedModel?.instance != null,
+      modelSupportsThinking = rememberedSupportThinking,
+      thinkingEnabled = rememberedThinkingEnabled && rememberedSupportThinking,
     )
   }
 
@@ -125,6 +133,8 @@ object EdgeServerManager {
       isRunning = false,
       modelName = rememberedDisplayName,
       modelReady = rememberedModel?.instance != null,
+      modelSupportsThinking = rememberedSupportThinking,
+      thinkingEnabled = rememberedThinkingEnabled && rememberedSupportThinking,
     )
 
     Log.i(TAG, "Server stopped")
@@ -137,6 +147,7 @@ object EdgeServerManager {
     displayName: String,
     supportImage: Boolean = false,
     supportAudio: Boolean = false,
+    supportThinking: Boolean = false,
   ) {
     val currentModel = rememberedModel
     val currentScore = capabilityScore(rememberedSupportImage, rememberedSupportAudio)
@@ -154,12 +165,22 @@ object EdgeServerManager {
     rememberedDisplayName = displayName
     rememberedSupportImage = supportImage
     rememberedSupportAudio = supportAudio
+    rememberedSupportThinking = supportThinking
+    if (!supportThinking) {
+      rememberedThinkingEnabled = false
+    }
 
     // 今いる server / service に適用
     applyRememberedModelToServer()
     applyRememberedModelToService()
 
-    _state.value = _state.value.copy(modelName = displayName, modelReady = model.instance != null)
+    _state.value =
+      _state.value.copy(
+        modelName = displayName,
+        modelReady = model.instance != null,
+        modelSupportsThinking = supportThinking,
+        thinkingEnabled = rememberedThinkingEnabled && supportThinking,
+      )
     Log.i(TAG, "Model bound: $displayName")
   }
 
@@ -170,6 +191,8 @@ object EdgeServerManager {
     rememberedDisplayName = ""
     rememberedSupportImage = false
     rememberedSupportAudio = false
+    rememberedSupportThinking = false
+    rememberedThinkingEnabled = false
 
     server?.activeModel = null
     server?.activeModelHelper = null
@@ -177,7 +200,30 @@ object EdgeServerManager {
 
     service?.clearActiveModel()
 
-    _state.value = _state.value.copy(modelName = "", modelReady = false)
+    _state.value =
+      _state.value.copy(
+        modelName = "",
+        modelReady = false,
+        modelSupportsThinking = false,
+        thinkingEnabled = false,
+      )
+  }
+
+  fun setThinkingEnabled(enabled: Boolean) {
+    rememberedThinkingEnabled = enabled && rememberedSupportThinking
+    _state.value =
+      _state.value.copy(
+        thinkingEnabled = rememberedThinkingEnabled && rememberedSupportThinking,
+        modelSupportsThinking = rememberedSupportThinking,
+      )
+  }
+
+  fun resolveThinkingEnabled(requestedValue: Boolean?): Boolean {
+    return when {
+      !rememberedSupportThinking -> false
+      requestedValue == null -> rememberedThinkingEnabled
+      else -> requestedValue
+    }
   }
 
   private fun applyRememberedModelToServer() {
@@ -210,14 +256,18 @@ object EdgeServerManager {
       port = port,
       modelName = rememberedDisplayName,
       modelReady = rememberedModel?.instance != null,
+      modelSupportsThinking = rememberedSupportThinking,
+      thinkingEnabled = rememberedThinkingEnabled && rememberedSupportThinking,
     )
   }
 
-  fun recordRequestStart(prompt: String, imageCount: Int) {
+  fun recordRequestStart(prompt: String, imageCount: Int, thinkingEnabled: Boolean) {
     _state.value =
       _state.value.copy(
         latestRequest = prompt,
         latestResponse = "",
+        latestThinkingResponse = "",
+        latestThinkingEnabled = thinkingEnabled,
         latestImageCount = imageCount,
         requestInProgress = true,
         latestError = "",
@@ -229,6 +279,14 @@ object EdgeServerManager {
       return
     }
     _state.value = _state.value.copy(latestResponse = _state.value.latestResponse + chunk)
+  }
+
+  fun appendThinkingChunk(chunk: String) {
+    if (chunk.isEmpty()) {
+      return
+    }
+    _state.value =
+      _state.value.copy(latestThinkingResponse = _state.value.latestThinkingResponse + chunk)
   }
 
   fun recordRequestDone() {

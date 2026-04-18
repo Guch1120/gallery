@@ -20,6 +20,7 @@ def main() -> int:
         "http://127.0.0.1:8888/v1/chat/completions",
     )
     model_name = os.environ.get("EDGE_SERVER_MODEL", "auto")
+    thinking_env = os.environ.get("EDGE_SERVER_THINKING")
     # 既定の画像ファイルは DEFAULT_IMAGE_PATH で指定する。
     # 毎回別の画像を使いたい場合は、実行時に
     # `python3 gemma4_image.py /path/to/image.png`
@@ -67,6 +68,8 @@ def main() -> int:
             }
         ],
     }
+    if thinking_env is not None:
+        payload["thinking"] = thinking_env.lower() in {"1", "true", "on", "yes"}
 
     request = urllib.request.Request(
         endpoint_url,

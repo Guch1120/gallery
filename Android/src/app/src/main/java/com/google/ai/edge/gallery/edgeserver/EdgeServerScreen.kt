@@ -100,8 +100,8 @@ fun EdgeServerScreen(
   }
 
   LaunchedEffect(state.latestResponse, state.requestInProgress) {
-    if (state.requestInProgress && screenScrollState.maxValue - screenScrollState.value < 80) {
-      screenScrollState.animateScrollTo(screenScrollState.maxValue)
+    if (state.requestInProgress) {
+      screenScrollState.scrollTo(screenScrollState.maxValue)
     }
   }
 
@@ -321,6 +321,7 @@ fun EdgeServerScreen(
                         displayName = freshModel.displayName.ifEmpty { freshModel.name },
                         supportImage = task.id == BuiltInTaskId.LLM_ASK_IMAGE,
                         supportAudio = task.id == BuiltInTaskId.LLM_ASK_AUDIO,
+                        supportThinking = freshModel.llmSupportThinking,
                       )
                     },
                   )
@@ -339,6 +340,42 @@ fun EdgeServerScreen(
               )
             }
           }
+        }
+      }
+
+      Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+      ) {
+        Row(
+          modifier = Modifier.fillMaxWidth().padding(20.dp),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = "Thinking",
+              style = MaterialTheme.typography.titleSmall,
+              fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+              text =
+                when {
+                  !state.modelSupportsThinking ->
+                    "現在のモデルでは Thinking を使えません"
+                  state.thinkingEnabled ->
+                    "PC から未指定で呼ぶと Thinking が有効になります"
+                  else ->
+                    "PC から未指定で呼ぶと Thinking は無効です"
+                },
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+          }
+          Switch(
+            checked = state.thinkingEnabled,
+            onCheckedChange = { EdgeServerManager.setThinkingEnabled(it) },
+            enabled = state.modelSupportsThinking,
+          )
         }
       }
 
@@ -446,6 +483,8 @@ fun EdgeServerScreen(
                     if (state.latestImageCount > 0) {
                       append(" • images: ").append(state.latestImageCount)
                     }
+                    append(" • thinking: ")
+                    append(if (state.latestThinkingEnabled) "on" else "off")
                   },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -467,9 +506,23 @@ fun EdgeServerScreen(
                   lineHeight = 18.sp,
                 )
               }
+              if (state.latestThinkingResponse.isNotEmpty()) {
+                Text(
+                  text = "Thinking",
+                  style = MaterialTheme.typography.titleSmall,
+                  fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                  text = state.latestThinkingResponse,
+                  fontFamily = FontFamily.Monospace,
+                  fontSize = 12.sp,
+                  lineHeight = 18.sp,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+              }
               if (state.requestInProgress) {
                 Text(
-                  text = "Auto-scroll follows while you stay at the bottom",
+                  text = "Streaming中は自動で最下部まで追従します",
                   style = MaterialTheme.typography.bodySmall,
                   color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

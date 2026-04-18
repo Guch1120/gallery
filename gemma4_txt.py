@@ -16,6 +16,7 @@ def main() -> int:
         "http://127.0.0.1:8888/v1/chat/completions",
     )
     model_name = os.environ.get("EDGE_SERVER_MODEL", "auto")
+    thinking_env = os.environ.get("EDGE_SERVER_THINKING")
 
     if not prompt_path.is_file():
         print(f"prompt file not found: {prompt_path}", file=sys.stderr)
@@ -32,6 +33,8 @@ def main() -> int:
             }
         ],
     }
+    if thinking_env is not None:
+        payload["thinking"] = thinking_env.lower() in {"1", "true", "on", "yes"}
 
     request = urllib.request.Request(
         endpoint_url,
