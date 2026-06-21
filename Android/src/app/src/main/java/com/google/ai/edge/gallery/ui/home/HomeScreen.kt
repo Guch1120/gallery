@@ -60,6 +60,7 @@ import androidx.compose.material.icons.automirrored.rounded.ListAlt
 import androidx.compose.material.icons.rounded.Error
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Dns
+import androidx.compose.material.icons.rounded.PhotoCamera
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.TouchApp
 import androidx.compose.material3.AlertDialog
@@ -166,6 +167,7 @@ fun HomeScreen(
   onModelsClicked: () -> Unit,
   onEdgeServerClicked: () -> Unit = {},
   onClawClicked: () -> Unit = {},
+  onCameraVlmClicked: () -> Unit = {},
   enableAnimation: Boolean,
   modifier: Modifier = Modifier,
   gm4: Boolean = false,
@@ -374,6 +376,30 @@ fun HomeScreen(
                         )
                     ),
                 )
+              }
+              Row(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
+                SquareDrawerItem(
+                  label = "Camera VLM",
+                  description = "Infer current frame",
+                  icon = Icons.Rounded.PhotoCamera,
+                  onClick = {
+                    scope.launch { drawerState.close() }
+                    scope.launch {
+                      delay(50)
+                      onCameraVlmClicked()
+                    }
+                  },
+                  modifier = Modifier.weight(1f),
+                  iconBrush =
+                    linearGradient(
+                      colors =
+                        listOf(
+                          MaterialTheme.customColors.taskBgGradientColors[1][0],
+                          MaterialTheme.customColors.taskBgGradientColors[1][1],
+                        )
+                    ),
+                )
+                Spacer(modifier = Modifier.width(16.dp).weight(1f))
               }
             }
           }

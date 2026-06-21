@@ -1,3 +1,7 @@
 .DS_Store
 Android/src/local.properties
 Android/src/.gradle/
+__pycache__/
+answer_from_camera.txt
+image_from_phone/*
+!image_from_phone/.gitkeep

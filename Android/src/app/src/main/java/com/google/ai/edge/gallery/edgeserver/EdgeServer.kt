@@ -18,8 +18,10 @@ package com.google.ai.edge.gallery.edgeserver
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.util.Log
 import android.util.Base64
+import android.util.Log
+import com.google.ai.edge.gallery.camera.CameraFrameProvider
+import com.google.ai.edge.gallery.camera.TimestampedFrame
 import com.google.ai.edge.gallery.data.ConfigKeys
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.runtime.LlmModelHelper
@@ -32,6 +34,7 @@ import com.google.gson.stream.JsonReader
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.io.ByteArrayOutputStream
 import fi.iki.elonen.NanoHTTPD
 import java.nio.charset.StandardCharsets
 import java.util.UUID
@@ -169,6 +172,8 @@ class EdgeServer(
         uri == "/health" -> handleHealth()
         uri == "/v1/models" && method == Method.GET -> handleListModels()
         uri == "/v1/chat/completions" && method == Method.POST -> handleChatCompletions(session)
+        uri == "/v1/camera/chat/completions" && method == Method.POST ->
+          handleCameraChatCompletions(session)
         method == Method.OPTIONS -> newFixedLengthResponse(
           Response.Status.OK, MIME_PLAINTEXT, ""
         ).applyCors()
@@ -272,6 +277,172 @@ class EdgeServer(
       handleStreamingResponse(model, helper, payload, requestId, modelId)
     } else {
       handleNonStreamingResponse(model, helper, payload, requestId, modelId)
+    }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // POST /v1/camera/chat/completions
+  // ───────────────────────────────────────────────────────────────────────
+
+  private fun handleCameraChatCompletions(session: IHTTPSession): Response {
+    val bodyFiles = HashMap<String, String>()
+    try {
+      session.parseBody(bodyFiles)
+    } catch (e: Exception) {
+      return errorResponse(400, "Failed to parse request body: ${e.message}")
+    }
+
+    val bodyStr = readRequestBody(bodyFiles)
+    if (bodyStr.isEmpty()) {
+      return errorResponse(400, "Empty request body")
+    }
+
+    val body: JsonObject = try {
+      val reader = JsonReader(java.io.StringReader(bodyStr))
+      reader.isLenient = true
+      JsonParser.parseReader(reader).asJsonObject
+    } catch (e: Exception) {
+      return errorResponse(400, "Invalid JSON: ${e.message}")
+    }
+
+    val prompt = readStringField(body, "prompt")
+    if (prompt.isNullOrBlank()) {
+      return errorResponse(400, "\"prompt\" string is required")
+    }
+
+    val model = activeModel
+    val helper = activeModelHelper
+    if (model == null || helper == null || model.instance == null) {
+      return errorResponse(503, "No model loaded. Open the Gallery app and load a model first.")
+    }
+    if (!model.llmSupportImage || !EdgeServerManager.supportsImage()) {
+      return errorResponse(400, "The loaded model does not support image input.")
+    }
+
+    if (!inferenceSemaphore.tryAcquire()) {
+      Log.i(TAG, "Camera VLM request rejected: inference already in progress")
+      return cameraErrorResponse(
+        409,
+        "inference_in_progress",
+        "Another VLM inference is currently running.",
+      )
+    }
+
+    val result = StringBuilder()
+    val latch = CountDownLatch(1)
+    var errorMsg: String? = null
+    var frame: TimestampedFrame? = null
+    var configSnapshot: ModelConfigSnapshot? = null
+    try {
+      frame = CameraFrameProvider.sampleLatest()
+      val currentFrame = frame
+      if (currentFrame == null) {
+        Log.i(TAG, "Camera VLM request rejected: no camera frame available")
+        return cameraErrorResponse(
+          409,
+          "camera_frame_unavailable",
+          "No camera frame available yet. Open the Camera VLM screen so the camera is running.",
+        )
+      }
+
+      val systemInstruction = readStringField(body, "system_instruction")
+      val captureMode = readStringField(body, "capture_mode") ?: "latest"
+      val returnImage = readBooleanField(body, "return_image") ?: false
+      val requestedThinking = readThinkingFlag(body)
+      val thinkingEnabled = EdgeServerManager.resolveThinkingEnabled(requestedThinking)
+      val modelId = readStringField(body, "model")
+        ?.takeIf { it.isNotBlank() && it != "auto" }
+        ?: activeModelDisplayName.ifEmpty { model.name }
+      val payload =
+        ChatRequestPayload(
+          prompt = buildCameraPrompt(prompt, systemInstruction),
+          images = listOf(currentFrame.bitmap),
+          promptPreview = prompt.take(2000),
+          thinkingEnabled = thinkingEnabled,
+          maxTokens = EdgeServerManager.resolveMaxTokens(readIntField(body, "max_tokens", "maxTokens")),
+          topK = EdgeServerManager.resolveTopK(readIntField(body, "top_k", "topK", "topk")),
+          topP = EdgeServerManager.resolveTopP(readFloatField(body, "top_p", "topP", "topp")),
+          temperature =
+            EdgeServerManager.resolveTemperature(readFloatField(body, "temperature")),
+        )
+      configSnapshot = applyRequestConfig(model, helper, payload)
+      Log.i(
+        TAG,
+        "Camera VLM request started: mode=$captureMode, image=${currentFrame.bitmap.width}x${currentFrame.bitmap.height}, thinking=${payload.thinkingEnabled}, maxTokens=${payload.maxTokens}, topK=${payload.topK}, topP=${payload.topP}, temperature=${payload.temperature}",
+      )
+      EdgeServerManager.recordRequestStart(
+        payload.promptPreview,
+        payload.images.size,
+        payload.thinkingEnabled,
+      )
+
+      val startMs = System.currentTimeMillis()
+      helper.runInference(
+        model = model,
+        input = payload.prompt,
+        images = payload.images,
+        resultListener = { partial, isDone, partialThinking ->
+          if (partialThinking != null && partialThinking.isNotEmpty()) {
+            EdgeServerManager.appendThinkingChunk(partialThinking)
+          }
+          if (partial.isNotEmpty()) {
+            result.append(partial)
+            EdgeServerManager.appendResponseChunk(partial)
+          }
+          if (isDone) {
+            EdgeServerManager.recordRequestDone()
+            latch.countDown()
+          }
+        },
+        cleanUpListener = {
+          EdgeServerManager.recordRequestDone()
+          latch.countDown()
+        },
+        onError = { msg ->
+          errorMsg = msg
+          EdgeServerManager.recordRequestError(msg)
+          latch.countDown()
+        },
+        extraContext =
+          if (payload.thinkingEnabled) mapOf("enable_thinking" to "true") else emptyMap(),
+      )
+
+      if (!latch.await(timeoutSeconds, TimeUnit.SECONDS)) {
+        EdgeServerManager.recordRequestError("Camera VLM inference timed out after ${timeoutSeconds}s")
+        return errorResponse(504, "Inference timed out after ${timeoutSeconds}s")
+      }
+      if (errorMsg != null) {
+        val msg = errorMsg ?: "Inference failed"
+        if (msg.contains("without image support", ignoreCase = true)) {
+          return errorResponse(400, "The loaded model does not support image input.")
+        }
+        return errorResponse(500, "Inference error: $msg")
+      }
+
+      val inferenceTimeMs = System.currentTimeMillis() - startMs
+      Log.i(
+        TAG,
+        "Camera VLM request finished: image=${currentFrame.bitmap.width}x${currentFrame.bitmap.height}, inference_time_ms=$inferenceTimeMs",
+      )
+      val json = buildString {
+        append("""{"text":"${escapeJson(result.toString())}",""")
+        append(""""inference_time_ms":$inferenceTimeMs,""")
+        append(""""timestamp_ms":${currentFrame.timestampMs},""")
+        append(""""image_width":${currentFrame.bitmap.width},""")
+        append(""""image_height":${currentFrame.bitmap.height},""")
+        append(""""model":"${escapeJson(modelId)}"""")
+        if (returnImage) {
+          encodeBitmapAsJpegBase64(currentFrame.bitmap)?.let { imageBase64 ->
+            append(""","image_base64":"${escapeJson(imageBase64)}","image_format":"jpeg"""")
+          }
+        }
+        append("}")
+      }
+      return newFixedLengthResponse(Response.Status.OK, MIME_JSON, json).applyCors()
+    } finally {
+      configSnapshot?.let { restoreModelConfig(model, helper, it) }
+      frame?.bitmap?.recycle()
+      inferenceSemaphore.release()
     }
   }
 
@@ -604,6 +775,30 @@ class EdgeServer(
     return null
   }
 
+  private fun readStringField(body: JsonObject, name: String): String? {
+    val value = body.get(name) ?: return null
+    if (value.isJsonNull || !value.isJsonPrimitive) {
+      return null
+    }
+    return try {
+      value.asString
+    } catch (_: Exception) {
+      null
+    }
+  }
+
+  private fun readBooleanField(body: JsonObject, name: String): Boolean? {
+    val value = body.get(name) ?: return null
+    if (value.isJsonNull || !value.isJsonPrimitive) {
+      return null
+    }
+    return try {
+      value.asBoolean
+    } catch (_: Exception) {
+      null
+    }
+  }
+
   private fun readIntField(body: JsonObject, vararg names: String): Int? {
     for (name in names) {
       val value = body.get(name) ?: continue
@@ -712,6 +907,40 @@ class EdgeServer(
   private fun escapeJson(s: String): String = s
     .replace("\\", "\\\\").replace("\"", "\\\"")
     .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+
+  private fun buildCameraPrompt(prompt: String, systemInstruction: String?): String {
+    return buildString {
+      if (!systemInstruction.isNullOrBlank()) {
+        append("<start_of_turn>system\n")
+        append(systemInstruction)
+        append("<end_of_turn>\n")
+      }
+      append("<start_of_turn>user\n")
+      append(prompt)
+      append("<end_of_turn>\n<start_of_turn>model\n")
+    }
+  }
+
+  private fun encodeBitmapAsJpegBase64(bitmap: Bitmap): String? {
+    val output = ByteArrayOutputStream()
+    return try {
+      if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output)) {
+        return null
+      }
+      Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)
+    } finally {
+      try {
+        output.close()
+      } catch (_: IOException) {
+      }
+    }
+  }
+
+  private fun cameraErrorResponse(code: Int, error: String, message: String): Response {
+    val status = Response.Status.lookup(code) ?: Response.Status.INTERNAL_ERROR
+    val json = """{"error":"${escapeJson(error)}","message":"${escapeJson(message)}"}"""
+    return newFixedLengthResponse(status, MIME_JSON, json).applyCors()
+  }
 
   private fun errorResponse(code: Int, message: String): Response {
     val status = when (code) {

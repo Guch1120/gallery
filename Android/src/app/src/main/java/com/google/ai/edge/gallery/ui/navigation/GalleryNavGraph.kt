@@ -70,6 +70,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import com.google.ai.edge.gallery.GalleryEvent
+import com.google.ai.edge.gallery.camera.CameraVlmScreen
 import com.google.ai.edge.gallery.customtasks.common.CustomTaskData
 import com.google.ai.edge.gallery.customtasks.common.CustomTaskDataForBuiltinTask
 import com.google.ai.edge.gallery.data.ModelDownloadStatusType
@@ -102,6 +103,7 @@ private const val ROUTE_BENCHMARK = "benchmark"
 private const val ROUTE_MODEL_MANAGER = "model_manager"
 private const val ROUTE_EDGE_SERVER = "edge_server"
 private const val ROUTE_CLAW = "claw"
+private const val ROUTE_CAMERA_VLM = "camera_vlm"
 private const val ENTER_ANIMATION_DURATION_MS = 500
 private val ENTER_ANIMATION_EASING = EaseOutExpo
 private const val ENTER_ANIMATION_DELAY_MS = 100
@@ -326,6 +328,7 @@ fun GalleryNavHost(
             onModelsClicked = { navController.navigate(ROUTE_MODEL_MANAGER) },
             onEdgeServerClicked = { navController.navigate(ROUTE_EDGE_SERVER) },
             onClawClicked = { navController.navigate(ROUTE_CLAW) },
+            onCameraVlmClicked = { navController.navigate(ROUTE_CAMERA_VLM) },
             gm4 = true,
           )
         }
@@ -576,6 +579,21 @@ fun GalleryNavHost(
           navController.navigateUp()
         },
         modelManagerViewModel = modelManagerViewModel,
+      )
+    }
+
+    // Camera VLM: Android単体の現在フレーム推論。
+    composable(
+      route = ROUTE_CAMERA_VLM,
+      enterTransition = { slideUpEnter() },
+      exitTransition = { slideDownExit() },
+    ) {
+      CameraVlmScreen(
+        modelManagerViewModel = modelManagerViewModel,
+        onBack = {
+          enableHomeScreenAnimation = false
+          navController.navigateUp()
+        },
       )
     }
   }
